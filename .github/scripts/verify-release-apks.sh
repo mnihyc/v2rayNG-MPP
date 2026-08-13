@@ -17,7 +17,8 @@ readonly metadata="$apk_root/output-metadata.json"
 
 for variable in GITHUB_REPOSITORY GITHUB_REF_NAME GITHUB_SHA \
   MPTUNNEL_VERSION MPTUNNEL_TAG MPTUNNEL_COMMIT MPTUNNEL_RELEASE_ID \
-  MPTUNNEL_ASSET MPTUNNEL_ASSET_ID MPTUNNEL_SHA256 \
+  MPTUNNEL_ARM64_ASSET MPTUNNEL_ARM64_ASSET_ID MPTUNNEL_ARM64_SHA256 \
+  MPTUNNEL_X86_64_ASSET MPTUNNEL_X86_64_ASSET_ID MPTUNNEL_X86_64_SHA256 \
   ANDROID_SDK_ROOT; do
   [[ -n "${!variable:-}" ]] || {
     echo "required environment variable is empty: $variable" >&2
@@ -50,16 +51,24 @@ done
   echo "MPTUNNEL tag/version mismatch" >&2
   exit 1
 }
-[[ "$MPTUNNEL_ASSET" == "mptunnel-${MPTUNNEL_VERSION}-android-jni.tar.gz" ]] || {
-  echo "MPTUNNEL asset/version mismatch" >&2
+[[ "$MPTUNNEL_ARM64_ASSET" == "mptunnel-${MPTUNNEL_VERSION}-android-arm64.tar.gz" ]] || {
+  echo "MPTUNNEL arm64 asset/version mismatch" >&2
   exit 1
 }
-[[ "$MPTUNNEL_RELEASE_ID" =~ ^[1-9][0-9]*$ && "$MPTUNNEL_ASSET_ID" =~ ^[1-9][0-9]*$ ]] || {
-  echo "MPTUNNEL release or asset ID is invalid" >&2
+[[ "$MPTUNNEL_X86_64_ASSET" == "mptunnel-${MPTUNNEL_VERSION}-android-x86_64.tar.gz" ]] || {
+  echo "MPTUNNEL x86_64 asset/version mismatch" >&2
   exit 1
 }
-[[ "$MPTUNNEL_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
-  echo "MPTUNNEL_SHA256 is not a SHA-256 digest" >&2
+[[ "$MPTUNNEL_RELEASE_ID" =~ ^[1-9][0-9]*$ &&
+  "$MPTUNNEL_ARM64_ASSET_ID" =~ ^[1-9][0-9]*$ &&
+  "$MPTUNNEL_X86_64_ASSET_ID" =~ ^[1-9][0-9]*$ &&
+  "$MPTUNNEL_ARM64_ASSET_ID" != "$MPTUNNEL_X86_64_ASSET_ID" ]] || {
+  echo "MPTUNNEL release or Android asset IDs are invalid" >&2
+  exit 1
+}
+[[ "$MPTUNNEL_ARM64_SHA256" =~ ^[0-9a-f]{64}$ &&
+  "$MPTUNNEL_X86_64_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "a MPTUNNEL Android archive has no SHA-256 digest" >&2
   exit 1
 }
 
@@ -216,11 +225,14 @@ jq -s \
   --arg mptunnel_tag "$MPTUNNEL_TAG" \
   --arg mptunnel_commit "$MPTUNNEL_COMMIT" \
   --arg mptunnel_release_id "$MPTUNNEL_RELEASE_ID" \
-  --arg mptunnel_asset "$MPTUNNEL_ASSET" \
-  --arg mptunnel_asset_id "$MPTUNNEL_ASSET_ID" \
-  --arg mptunnel_sha256 "$MPTUNNEL_SHA256" '
+  --arg mptunnel_arm64_asset "$MPTUNNEL_ARM64_ASSET" \
+  --arg mptunnel_arm64_asset_id "$MPTUNNEL_ARM64_ASSET_ID" \
+  --arg mptunnel_arm64_sha256 "$MPTUNNEL_ARM64_SHA256" \
+  --arg mptunnel_x86_64_asset "$MPTUNNEL_X86_64_ASSET" \
+  --arg mptunnel_x86_64_asset_id "$MPTUNNEL_X86_64_ASSET_ID" \
+  --arg mptunnel_x86_64_sha256 "$MPTUNNEL_X86_64_SHA256" '
   {
-    schema_version: 1,
+    schema_version: 2,
     repository: $repository,
     tag: $tag,
     commit: $commit,
@@ -232,9 +244,20 @@ jq -s \
       tag: $mptunnel_tag,
       commit: $mptunnel_commit,
       release_id: ($mptunnel_release_id | tonumber),
-      asset: $mptunnel_asset,
-      asset_id: ($mptunnel_asset_id | tonumber),
-      sha256: $mptunnel_sha256
+      assets: [
+        {
+          abi: "arm64-v8a",
+          name: $mptunnel_arm64_asset,
+          asset_id: ($mptunnel_arm64_asset_id | tonumber),
+          sha256: $mptunnel_arm64_sha256
+        },
+        {
+          abi: "x86_64",
+          name: $mptunnel_x86_64_asset,
+          asset_id: ($mptunnel_x86_64_asset_id | tonumber),
+          sha256: $mptunnel_x86_64_sha256
+        }
+      ]
     },
     apks: .
   }

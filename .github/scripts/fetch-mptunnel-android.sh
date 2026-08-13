@@ -13,14 +13,14 @@ readonly output_root="${1:-$repository_root/V2rayNG/app/libs}"
   echo "GITHUB_TOKEN is required to verify immutable release metadata" >&2
   exit 2
 }
-for command in curl jq sha256sum tar readelf; do
+for command in curl file jq sha256sum tar readelf; do
   command -v "$command" >/dev/null || {
     echo "required command is unavailable: $command" >&2
     exit 2
   }
 done
 
-work_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/mptunnel-jni.XXXXXX")"
+work_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/mptunnel-android.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
 release_json="$work_root/release.json"
 
@@ -49,10 +49,6 @@ readonly stable_semver_pattern='^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0
 }
 release_version="${release_tag#v}"
 readonly release_version
-archive_name="mptunnel-${release_version}-android-jni.tar.gz"
-readonly archive_name
-package_root="mptunnel-${release_version}-android-jni"
-readonly package_root
 
 jq -e --arg tag "$release_tag" '
   (.id | type) == "number" and
@@ -104,8 +100,8 @@ download_asset() {
   }
   id="$(jq -er '.[0].id' <<<"$matches")"
   digest="$(jq -er '.[0].digest' <<<"$matches")"
-  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-    echo "$name has no GitHub SHA-256 asset digest" >&2
+  [[ "$id" =~ ^[1-9][0-9]*$ && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "$name has invalid immutable GitHub asset metadata" >&2
     exit 1
   }
   curl --fail --silent --show-error --location --retry 3 \
@@ -119,28 +115,17 @@ download_asset() {
     echo "$name does not match its immutable GitHub asset digest" >&2
     exit 1
   }
-  printf '%s' "$actual"
+  printf '%s\t%s\n' "$id" "$actual"
 }
 
-archive="$work_root/$archive_name"
 version_file="$work_root/$version_name"
-archive_sha256="$(download_asset "$archive_name" "$archive")"
 download_asset "$version_name" "$version_file" >/dev/null
-archive_asset_id="$(jq -er --arg name "$archive_name" '
-  .assets[] | select(.name == $name) | .id
-' "$release_json")"
-readonly archive_asset_id
-[[ "$archive_asset_id" =~ ^[1-9][0-9]*$ ]] || {
-  echo "$archive_name has an invalid GitHub asset ID" >&2
-  exit 1
-}
 
 jq -e \
   --arg version "$release_version" \
   --arg tag "$release_tag" \
   --arg commit "$object_sha" \
-  --arg repository "$release_repository" \
-  --arg asset "$archive_name" '
+  --arg repository "$release_repository" '
   (keys | sort) == (["assets", "commit", "product", "schema_version", "tag", "version"] | sort) and
   .schema_version == 2 and
   .product == "mptunnel" and
@@ -148,17 +133,15 @@ jq -e \
   .tag == $tag and
   .commit == $commit and
   (.assets | type) == "array" and
-  (.assets | length) > 0 and
-  ([.assets[].name] | unique | length) == (.assets | length) and
+  (.assets | length) == 8 and
+  ([.assets[].name] | unique | length) == 8 and
   all(.assets[];
     (keys | sort) == ["download_url", "name"] and
     (.name | type) == "string" and
     (.name | test("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) and
     .name != "version.json" and
-    (.download_url | type) == "string") and
-  all(.assets[]; .download_url ==
-    ("https://github.com/" + $repository + "/releases/download/" + $tag + "/" + .name)) and
-  ([.assets[] | select(.name == $asset)] | length) == 1
+    .download_url ==
+      ("https://github.com/" + $repository + "/releases/download/" + $tag + "/" + .name))
 ' "$version_file" >/dev/null
 
 expected_release_assets="$work_root/expected-release-assets.txt"
@@ -169,40 +152,6 @@ actual_release_assets="$work_root/actual-release-assets.txt"
 } | LC_ALL=C sort > "$expected_release_assets"
 jq -r '.assets[].name' "$release_json" | LC_ALL=C sort > "$actual_release_assets"
 diff -u "$expected_release_assets" "$actual_release_assets"
-
-expected_inventory="$work_root/expected-inventory.txt"
-actual_inventory="$work_root/actual-inventory.txt"
-printf '%s\n' \
-  "$package_root/" \
-  "$package_root/LICENSE" \
-  "$package_root/README.md" \
-  "$package_root/arm64-v8a/" \
-  "$package_root/arm64-v8a/libmptunnel.so" \
-  "$package_root/x86_64/" \
-  "$package_root/x86_64/libmptunnel.so" \
-  | LC_ALL=C sort > "$expected_inventory"
-tar --list --gzip --file "$archive" | LC_ALL=C sort > "$actual_inventory"
-diff -u "$expected_inventory" "$actual_inventory"
-
-extract_root="$work_root/extracted"
-mkdir -p "$extract_root"
-tar --extract --gzip --file "$archive" --directory "$extract_root" \
-  --no-same-owner --no-same-permissions
-for file in LICENSE README.md; do
-  [[ -f "$extract_root/$package_root/$file" && ! -L "$extract_root/$package_root/$file" ]] || {
-    echo "archive member is not a regular file: $file" >&2
-    exit 1
-  }
-done
-if find "$extract_root" -type l -print -quit | grep -q .; then
-  echo "MPTUNNEL JNI archive contains a symbolic link" >&2
-  exit 1
-fi
-
-for abi in arm64-v8a x86_64; do
-  library="$extract_root/$package_root/$abi/libmptunnel.so"
-  "$script_root/verify-mptunnel-library.sh" "$abi" "$library"
-done
 
 mapfile -t existing_libraries < <(
   find "$output_root" -mindepth 2 -maxdepth 2 -type f -name libmptunnel.so -print 2>/dev/null || true
@@ -217,12 +166,64 @@ for library in "${existing_libraries[@]}"; do
   esac
 done
 
+declare -A asset_names asset_ids asset_sha256
+asset_names[arm64-v8a]="mptunnel-${release_version}-android-arm64.tar.gz"
+asset_names[x86_64]="mptunnel-${release_version}-android-x86_64.tar.gz"
+
 for abi in arm64-v8a x86_64; do
+  archive_name="${asset_names[$abi]}"
+  archive="$work_root/$archive_name"
+  IFS=$'\t' read -r asset_ids[$abi] asset_sha256[$abi] < <(
+    download_asset "$archive_name" "$archive"
+  )
+  package_root="${archive_name%.tar.gz}"
+  case "$abi" in
+    arm64-v8a) cli_arch='aarch64|arm64' ;;
+    x86_64) cli_arch='x86[-_ ]64|x86-64' ;;
+  esac
+  expected_inventory="$work_root/$abi-expected-inventory.txt"
+  actual_inventory="$work_root/$abi-actual-inventory.txt"
+  printf '%s\n' \
+    "$package_root/" \
+    "$package_root/README.md" \
+    "$package_root/examples/" \
+    "$package_root/examples/client.toml" \
+    "$package_root/examples/server.toml" \
+    "$package_root/$abi/" \
+    "$package_root/$abi/libmptunnel.so" \
+    "$package_root/mptunnel" \
+    | LC_ALL=C sort > "$expected_inventory"
+  tar --list --gzip --file "$archive" | LC_ALL=C sort > "$actual_inventory"
+  diff -u "$expected_inventory" "$actual_inventory"
+
+  extract_root="$work_root/extracted-$abi"
+  mkdir -p "$extract_root"
+  tar --extract --gzip --file "$archive" --directory "$extract_root" \
+    --no-same-owner --no-same-permissions
+  if find "$extract_root" -type l -print -quit | grep -q .; then
+    echo "$archive_name contains a symbolic link" >&2
+    exit 1
+  fi
+  for relative in README.md examples/client.toml examples/server.toml mptunnel "$abi/libmptunnel.so"; do
+    [[ -f "$extract_root/$package_root/$relative" && ! -L "$extract_root/$package_root/$relative" ]] || {
+      echo "$archive_name member is not a regular file: $relative" >&2
+      exit 1
+    }
+  done
+  file "$extract_root/$package_root/mptunnel" | grep -Eiq "$cli_arch" || {
+    echo "$archive_name CLI architecture does not match $abi" >&2
+    exit 1
+  }
+  library="$extract_root/$package_root/$abi/libmptunnel.so"
+  "$script_root/verify-mptunnel-library.sh" "$abi" "$library"
   mkdir -p "$output_root/$abi"
-  install -m 0644 \
-    "$extract_root/$package_root/$abi/libmptunnel.so" \
-    "$output_root/$abi/libmptunnel.so"
+  install -m 0644 "$library" "$output_root/$abi/libmptunnel.so"
 done
+
+[[ "${asset_ids[arm64-v8a]}" != "${asset_ids[x86_64]}" ]] || {
+  echo "Android MPTUNNEL archives unexpectedly share one asset ID" >&2
+  exit 1
+}
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
@@ -230,11 +231,14 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "tag=$release_tag"
     echo "commit=$object_sha"
     echo "release_id=$release_id"
-    echo "asset=$archive_name"
-    echo "asset_id=$archive_asset_id"
-    echo "sha256=$archive_sha256"
+    echo "arm64_asset=${asset_names[arm64-v8a]}"
+    echo "arm64_asset_id=${asset_ids[arm64-v8a]}"
+    echo "arm64_sha256=${asset_sha256[arm64-v8a]}"
+    echo "x86_64_asset=${asset_names[x86_64]}"
+    echo "x86_64_asset_id=${asset_ids[x86_64]}"
+    echo "x86_64_sha256=${asset_sha256[x86_64]}"
   } >> "$GITHUB_OUTPUT"
 fi
-printf 'resolved MPTUNNEL version=%s tag=%s commit=%s release_id=%s asset=%s asset_id=%s sha256=%s\n' \
+printf 'resolved MPTUNNEL version=%s tag=%s commit=%s release_id=%s arm64_asset_id=%s x86_64_asset_id=%s\n' \
   "$release_version" "$release_tag" "$object_sha" "$release_id" \
-  "$archive_name" "$archive_asset_id" "$archive_sha256"
+  "${asset_ids[arm64-v8a]}" "${asset_ids[x86_64]}"

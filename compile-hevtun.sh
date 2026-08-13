@@ -14,7 +14,7 @@ clear_tmp () {
 }
 trap 'echo -e "Aborted, error $? in command: $BASH_COMMAND"; trap ERR; clear_tmp; exit 1' ERR INT
 
-ABIS="${HEV_ABIS:-armeabi-v7a arm64-v8a x86 x86_64}"
+ABIS="${HEV_ABIS:-arm64-v8a x86_64}"
 
 mkdir -p "$hev_tmp_root/jni"
 pushd "$hev_tmp_root"

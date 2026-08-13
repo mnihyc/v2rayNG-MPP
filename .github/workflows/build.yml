@@ -85,11 +85,11 @@ jobs:
           mkdir -p V2rayNG/app/libs
           cp -R libs/. V2rayNG/app/libs/
 
-      - name: Consume immutable MPTUNNEL Android JNI release
+      - name: Consume two Android archives from one frozen MPTUNNEL release
         id: mptunnel
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/fetch-mptunnel-android-jni.sh
+        run: .github/scripts/fetch-mptunnel-android.sh
 
       - name: Download pinned Xray AAR line
         env:
@@ -177,9 +177,12 @@ jobs:
           MPTUNNEL_TAG: ${{ steps.mptunnel.outputs.tag }}
           MPTUNNEL_COMMIT: ${{ steps.mptunnel.outputs.commit }}
           MPTUNNEL_RELEASE_ID: ${{ steps.mptunnel.outputs.release_id }}
-          MPTUNNEL_ASSET: ${{ steps.mptunnel.outputs.asset }}
-          MPTUNNEL_ASSET_ID: ${{ steps.mptunnel.outputs.asset_id }}
-          MPTUNNEL_SHA256: ${{ steps.mptunnel.outputs.sha256 }}
+          MPTUNNEL_ARM64_ASSET: ${{ steps.mptunnel.outputs.arm64_asset }}
+          MPTUNNEL_ARM64_ASSET_ID: ${{ steps.mptunnel.outputs.arm64_asset_id }}
+          MPTUNNEL_ARM64_SHA256: ${{ steps.mptunnel.outputs.arm64_sha256 }}
+          MPTUNNEL_X86_64_ASSET: ${{ steps.mptunnel.outputs.x86_64_asset }}
+          MPTUNNEL_X86_64_ASSET_ID: ${{ steps.mptunnel.outputs.x86_64_asset_id }}
+          MPTUNNEL_X86_64_SHA256: ${{ steps.mptunnel.outputs.x86_64_sha256 }}
         run: |
           .github/scripts/verify-release-apks.sh \
             V2rayNG/app/build/outputs/apk/fdroid/release \
@@ -227,18 +230,29 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --arg tag "$RELEASE_TAG" \
             --arg commit "$RELEASE_COMMIT" '
-              .schema_version == 1 and
+              (.mptunnel.version) as $mptunnel_version |
+              .schema_version == 2 and
               .repository == $repository and
               .tag == $tag and
               .commit == $commit and
               .application_id == "com.v2ray.ang.mpp.fdroid" and
-              (.mptunnel.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+              ($mptunnel_version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
               .mptunnel.tag == ("v" + .mptunnel.version) and
-              .mptunnel.asset == ("mptunnel-" + .mptunnel.version + "-android-jni.tar.gz") and
               (.mptunnel.commit | test("^[0-9a-f]{40}$")) and
               (.mptunnel.release_id | type) == "number" and .mptunnel.release_id > 0 and
-              (.mptunnel.asset_id | type) == "number" and .mptunnel.asset_id > 0 and
-              (.mptunnel.sha256 | test("^[0-9a-f]{64}$")) and
+              (.mptunnel.assets | type) == "array" and
+              (.mptunnel.assets | length) == 2 and
+              ([.mptunnel.assets[].abi] | sort) == ["arm64-v8a", "x86_64"] and
+              ([.mptunnel.assets[].asset_id] | unique | length) == 2 and
+              all(.mptunnel.assets[];
+                (keys | sort) == (["abi", "asset_id", "name", "sha256"] | sort) and
+                (.asset_id | type) == "number" and .asset_id > 0 and
+                (.sha256 | test("^[0-9a-f]{64}$")) and
+                if .abi == "arm64-v8a" then
+                  .name == ("mptunnel-" + $mptunnel_version + "-android-arm64.tar.gz")
+                elif .abi == "x86_64" then
+                  .name == ("mptunnel-" + $mptunnel_version + "-android-x86_64.tar.gz")
+                else false end) and
               ([.apks[].abi] | sort) == ["arm64-v8a", "universal", "x86_64"] and
               all(.apks[]; .sha256 | test("^[0-9a-f]{64}$"))
             ' "$provenance" >/dev/null

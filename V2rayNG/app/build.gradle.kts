@@ -26,9 +26,7 @@ android {
                 } else {
                     include(
                         "arm64-v8a",
-                        "armeabi-v7a",
-                        "x86_64",
-                        "x86"
+                        "x86_64"
                     )
                 }
                 isUniversalApk = (properties["UNIVERSAL_APK"] as? String)

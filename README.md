@@ -50,9 +50,11 @@ Release APKs are built, signed, checked, and published only by
 [GitHub Actions](https://github.com/mnihyc/v2rayNG-MPP/actions). The workflow does
 not pin an MPTUNNEL version. For each build it resolves the latest stable,
 immutable MPTUNNEL release, freezes its release/tag/commit identity, and verifies
-its release manifest, GitHub SHA-256 digest, exact two-ABI archive inventory,
-ELF properties, and JNI exports before embedding it. The same native checks are
-then repeated against the signed APKs before publication.
+its release manifest and GitHub SHA-256 digests. From that one frozen release it
+consumes the ordinary `android-arm64` and `android-x86_64` platform archives,
+embedding respectively the `arm64-v8a` and `x86_64` `libmptunnel.so`. Each exact
+archive inventory, ELF properties, and JNI exports is checked before embedding;
+the same native checks are repeated against the signed APKs before publication.
 
 ## GeoIP and GeoSite data
 
