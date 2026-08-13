@@ -1,1 +1,1 @@
-A V2Ray client for Android, support Xray core and v2fly core
+An advanced Android proxy client with native MPTUNNEL support

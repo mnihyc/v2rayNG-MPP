@@ -209,6 +209,7 @@ object AppConfig {
     const val HYSTERIA = "hysteria://"
     const val HYSTERIA2 = "hysteria2://"
     const val HY2 = "hy2://"
+    const val MPP = "mpp://"
     const val V2RAYNFMTS = "v2rayn://"
 
     /** Give a good name to this, IDK*/

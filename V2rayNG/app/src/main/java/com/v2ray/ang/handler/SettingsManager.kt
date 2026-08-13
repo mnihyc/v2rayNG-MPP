@@ -411,6 +411,12 @@ object SettingsManager {
      * @return True if HEV TUN is used, false otherwise.
      */
     fun isUsingHevTun(): Boolean {
+        val selectedProfile = MmkvManager.getSelectServer()?.let(::decodeServerConfig)
+        if (selectedProfile?.configType == EConfigType.MPP) {
+            // MPTUNNEL owns the loopback mixed proxy. Android's existing HEV bridge owns the
+            // VPN TUN and forwards both TCP and UDP to that listener.
+            return true
+        }
         return MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true)
     }
 

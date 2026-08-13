@@ -6,13 +6,13 @@ import android.content.Intent
 object ProfileEditorResult {
 
     const val EXTRA_ACTION =
-        "com.v2ray.ang.extra.PROFILE_EDITOR_ACTION"
+        "com.v2ray.ang.mpp.extra.PROFILE_EDITOR_ACTION"
 
     const val EXTRA_GUID =
-        "com.v2ray.ang.extra.PROFILE_EDITOR_GUID"
+        "com.v2ray.ang.mpp.extra.PROFILE_EDITOR_GUID"
 
     const val EXTRA_RESTART_SERVICE =
-        "com.v2ray.ang.extra.PROFILE_EDITOR_RESTART_SERVICE"
+        "com.v2ray.ang.mpp.extra.PROFILE_EDITOR_RESTART_SERVICE"
 
     const val ACTION_SAVED = "saved"
     const val ACTION_DELETED = "deleted"

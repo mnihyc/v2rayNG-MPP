@@ -69,10 +69,13 @@ fun EConfigType.isGroupType(): Boolean {
 }
 
 /**
- * Checks if the config type is a complex type (Custom, PolicyGroup, or ProxyChain).
+ * Checks if the config type owns configuration outside Xray's normal outbound schema.
  *
- * @return True if the config type is Custom, PolicyGroup, or ProxyChain, false otherwise.
+ * @return True if the config type is Custom, MPP, PolicyGroup, or ProxyChain, false otherwise.
  */
 fun EConfigType.isComplexType(): Boolean {
-    return this == EConfigType.CUSTOM || this == EConfigType.POLICYGROUP || this == EConfigType.PROXYCHAIN
+    return this == EConfigType.CUSTOM ||
+            this == EConfigType.MPP ||
+            this == EConfigType.POLICYGROUP ||
+            this == EConfigType.PROXYCHAIN
 }

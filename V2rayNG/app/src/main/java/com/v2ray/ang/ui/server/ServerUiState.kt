@@ -9,9 +9,12 @@ import com.v2ray.ang.AppConfig.REALITY
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_ADDRESS_V4
 import com.v2ray.ang.AppConfig.WIREGUARD_LOCAL_MTU
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.dto.entities.MppProfileConfig
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
 import com.v2ray.ang.extension.nullIfBlank
+import com.v2ray.ang.mpp.MppParsedPath
+import com.v2ray.ang.mpp.MppPathParser
 import com.v2ray.ang.util.JsonUtil
 
 class ServerUiState(
@@ -61,7 +64,8 @@ class ServerUiState(
     echConfigList: String = "",
     verifyPeerCertByName: String = "",
     pinnedCA256: String = "",
-    isFetchingCert: Boolean = false
+    isFetchingCert: Boolean = false,
+    mppConfig: MppProfileConfig = MppProfileConfig(),
 ) {
     var configType by mutableStateOf(configType)
     var remarks by mutableStateOf(remarks)
@@ -110,6 +114,7 @@ class ServerUiState(
     var verifyPeerCertByName by mutableStateOf(verifyPeerCertByName)
     var pinnedCA256 by mutableStateOf(pinnedCA256)
     var isFetchingCert by mutableStateOf(isFetchingCert)
+    var mppConfig by mutableStateOf(mppConfig)
 
     fun toProfileItem(initialConfig: ProfileItem): ProfileItem {
         val isVmess = configType == EConfigType.VMESS
@@ -118,12 +123,23 @@ class ServerUiState(
         val isSocksOrHttp = configType == EConfigType.SOCKS || configType == EConfigType.HTTP
         val isWireguard = configType == EConfigType.WIREGUARD
         val isHysteria2 = configType == EConfigType.HYSTERIA2
+        val isMpp = configType == EConfigType.MPP
+        val hasExplicitMppPaths = isMpp && mppConfig.paths != null
+        val explicitMppSummary = if (hasExplicitMppPaths) {
+            firstValidExplicitMppPath(mppConfig)
+        } else {
+            null
+        }
 
         return initialConfig.copy(
             configType = configType,
             remarks = remarks,
-            server = address,
-            serverPort = port,
+            server = if (hasExplicitMppPaths) explicitMppSummary?.host.orEmpty() else address,
+            serverPort = when {
+                hasExplicitMppPaths -> explicitMppSummary?.firstPort?.toString().orEmpty()
+                isMpp -> mppConfig.primaryPort().toString()
+                else -> port
+            },
             password = password,
             method = when {
                 isVmess || isShadowsocks -> method
@@ -175,19 +191,35 @@ class ServerUiState(
             mldsa65Verify = mldsa65Verify,
             echConfigList = echConfigList,
             verifyPeerCertByName = verifyPeerCertByName,
-            pinnedCA256 = pinnedCA256
+            pinnedCA256 = pinnedCA256,
+            mpp = if (isMpp) mppConfig else null,
         )
     }
 
     companion object {
         fun fromProfileItem(
             initialConfig: ProfileItem
-        ): ServerUiState =
-            ServerUiState(
+        ): ServerUiState {
+            val mpp = initialConfig.mpp
+            val hasExplicitMppPaths = initialConfig.configType == EConfigType.MPP && mpp?.paths != null
+            val explicitMppSummary = if (hasExplicitMppPaths) {
+                firstValidExplicitMppPath(mpp)
+            } else {
+                null
+            }
+            return ServerUiState(
                 configType = initialConfig.configType,
                 remarks = initialConfig.remarks,
-                address = initialConfig.server ?: "",
-                port = initialConfig.serverPort ?: DEFAULT_PORT.toString(),
+                address = if (hasExplicitMppPaths) {
+                    explicitMppSummary?.host.orEmpty()
+                } else {
+                    initialConfig.server ?: ""
+                },
+                port = if (hasExplicitMppPaths) {
+                    explicitMppSummary?.firstPort?.toString().orEmpty()
+                } else {
+                    initialConfig.serverPort ?: DEFAULT_PORT.toString()
+                },
                 password = initialConfig.password ?: "",
                 method = initialConfig.method ?: "",
                 flow = initialConfig.flow ?: "",
@@ -229,8 +261,10 @@ class ServerUiState(
                 mldsa65Verify = initialConfig.mldsa65Verify ?: "",
                 echConfigList = initialConfig.echConfigList ?: "",
                 verifyPeerCertByName = initialConfig.verifyPeerCertByName ?: "",
-                pinnedCA256 = initialConfig.pinnedCA256 ?: ""
+                pinnedCA256 = initialConfig.pinnedCA256 ?: "",
+                mppConfig = mpp ?: MppProfileConfig(),
             )
+        }
 
         fun from(
             initialConfig: ProfileItem
@@ -244,5 +278,11 @@ class ServerUiState(
                 }
             }
         )
+
+        private fun firstValidExplicitMppPath(config: MppProfileConfig): MppParsedPath? =
+            config.paths
+                ?.asSequence()
+                ?.mapNotNull { path -> MppPathParser.parse(path.endpoint) }
+                ?.firstOrNull()
     }
 }

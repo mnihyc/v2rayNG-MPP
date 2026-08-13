@@ -36,7 +36,7 @@ class CoreProxyOnlyService : Service(), ServiceControl {
 
         if (!CoreServiceManager.startCoreLoop(null)) {
             LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
-            stopSelf()
+            stopService()
             return START_NOT_STICKY
         }
 
@@ -70,7 +70,11 @@ class CoreProxyOnlyService : Service(), ServiceControl {
      * Stops the service.
      */
     override fun stopService() {
-        stopSelf()
+        if (!CoreServiceManager.isMptunnelActive() || CoreServiceManager.stopCoreLoop()) {
+            stopSelf()
+        } else {
+            LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Core stop incomplete; retaining service")
+        }
     }
 
     /**

@@ -1,162 +1,391 @@
-name: Build APK
+name: Android CI and signed artifacts
 
 on:
   workflow_dispatch:
-    inputs:
-      release_tag:
-        required: false
-        type: string
+  pull_request:
+    branches: [master]
   push:
-    branches:
-      - master
+    branches: [master]
+    tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  ANDROID_ABIS: arm64-v8a;x86_64
+  ANDROID_NDK_VERSION: 29.0.14206865
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  build-and-test:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-      with:
-        submodules: 'recursive'
-        fetch-depth: '0'
-
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v4
-      with:
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '14742923'
-        packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
-
-    - name: Install NDK
-      run: |
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-          --channel=0 \
-          --install "ndk;29.0.14206865"
-        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
-        sed -i '10i\
-        \
-            ndkVersion = "29.0.14206865"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
-
-    - name: Restore cached libhevtun
-      id: cache-libhevtun-restore
-      uses: actions/cache/restore@v6
-      with:
-        path: ${{ github.workspace }}/libs
-        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
-
-    - name: Build libhevtun
-      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
-      run: |
-        bash compile-hevtun.sh
-    
-    - name: Save libhevtun
-      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
-      with:
-        path: ${{ github.workspace }}/libs
-        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
-
-    - name: Copy libhevtun
-      run: |
-        cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
-
-    - name: Fetch AndroidLibXrayLite tag
-      run: |
-        pushd AndroidLibXrayLite
-        CURRENT_TAG=$(git describe --tags --abbrev=0)
-        echo "Current tag in this repo: $CURRENT_TAG"
-        echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
-        popd
-
-    - name: Download libv2ray
-      uses: robinraju/release-downloader@v1.13
-      with:
-        repository: '2dust/AndroidLibXrayLite'
-        tag: ${{ env.CURRENT_TAG }}
-        fileName: 'libv2ray.aar'
-        out-file-path: V2rayNG/app/libs/
-
-    - name: Setup Java
-      uses: actions/setup-java@v5.7.0
-      with:
-        distribution: 'temurin'
-        java-version: '21'
-
-    - name: Decode Keystore
-      uses: timheuer/base64-to-file@v2.0.0
-      id: android_keystore
-      with:
-        fileName: "android_keystore.jks"
-        encodedString: ${{ secrets.APP_KEYSTORE_BASE64 }}
-
-    - name: Build APK
-      run: |
-        cd ${{ github.workspace }}/V2rayNG
-        echo "sdk.dir=${ANDROID_HOME}" > local.properties
-        chmod 755 gradlew
-        ./gradlew licenseFdroidReleaseReport
-        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
-    
-    - name: Upload arm64-v8a APK
-      uses: actions/upload-artifact@v7
-      if: ${{  success() }}
-      with:
-        name: arm64-v8a
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
-
-    - name: Upload armeabi-v7a APK
-      uses: actions/upload-artifact@v7
-      if: ${{  success() }}
-      with:
-        name: armeabi-v7a
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*armeabi-v7a*.apk
-
-    - name: Upload x86 APK
-      uses: actions/upload-artifact@v7
-      if: ${{  success() }}
-      with:
-        name: x86-apk
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*x86*.apk
-
-    - name: Upload universal APK
-      uses: actions/upload-artifact@v7
-      if: ${{ success() }}
-      with:
-        name: universal-apk
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
-
-  sign-and-release:
-    needs: build
-    runs-on: ubuntu-26.04
-    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
-
-    steps:
-      - name: Download APK artifacts
-        uses: actions/download-artifact@v8
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: release
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Sign APK files
+      - name: Preflight Android signing secrets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
         run: |
-          printf '%s' "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-          KEY=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
-          mkdir -p release-files
-
-          find release -type f -name '*.apk' | while read apk; do
-            cp "$apk" release-files/
-            gpg --batch --yes --local-user "$KEY" --detach-sign --output "release-files/$(basename "$apk").sig" "$apk"
+          set -euo pipefail
+          for variable in APP_KEYSTORE_BASE64 APP_KEYSTORE_PASSWORD \
+            APP_KEYSTORE_ALIAS APP_KEY_PASSWORD; do
+            [[ -n "${!variable}" ]] || {
+              echo "required release secret is empty: ${variable}" >&2
+              exit 1
+            }
           done
 
-          gpg --armor --export "$KEY" > release-files/v2rayN-public-key.asc
-
-      - name: Upload APKs, signatures and public key to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
-          file: release-files/*
-          tag: ${{ inputs.release_tag }}
-          file_glob: true
-          prerelease: true
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+          cache-dependency-path: V2rayNG/**/*.gradle*
+
+      - name: Set up pinned Android SDK and NDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: >-
+            platforms;android-37
+            build-tools;37.0.0
+            platform-tools
+            emulator
+            ndk;29.0.14206865
+
+      - name: Configure Android build
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > V2rayNG/local.properties
+          chmod 755 V2rayNG/gradlew
+          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Build HEV for supported ABIs
+        env:
+          HEV_ABIS: arm64-v8a x86_64
+        run: |
+          set -euo pipefail
+          ./compile-hevtun.sh
+          mkdir -p V2rayNG/app/libs
+          cp -R libs/. V2rayNG/app/libs/
+
+      - name: Consume immutable MPTUNNEL Android JNI release
+        id: mptunnel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch-mptunnel-android-jni.sh
+
+      - name: Download pinned Xray AAR line
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          xray_tag="$(git -C AndroidLibXrayLite describe --tags --abbrev=0)"
+          [[ "$xray_tag" =~ ^v[0-9] ]] || {
+            echo "AndroidLibXrayLite submodule has no version tag" >&2
+            exit 1
+          }
+          mkdir -p V2rayNG/app/libs
+          gh release download "$xray_tag" \
+            --repo 2dust/AndroidLibXrayLite \
+            --pattern libv2ray.aar \
+            --dir V2rayNG/app/libs
+          test -s V2rayNG/app/libs/libv2ray.aar
+          test "$(find V2rayNG/app/libs -maxdepth 1 -type f -name 'libv2ray*.aar' | wc -l)" = 1
+
+      - name: Run MPP unit tests
+        working-directory: V2rayNG
+        run: |
+          ./gradlew testFdroidDebugUnitTest \
+            --tests 'com.v2ray.ang.mpp.*' \
+            -PABI_FILTERS=x86_64 \
+            -PUNIVERSAL_APK=false
+
+      - name: Run x86_64 MPTUNNEL instrumentation
+        uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: >-
+            cd V2rayNG &&
+            ./gradlew connectedFdroidDebugAndroidTest
+            -PABI_FILTERS=x86_64
+            -PUNIVERSAL_APK=false
+            -Pandroid.testInstrumentationRunnerArguments.class=com.v2ray.ang.mpp.MptunnelNativeInstrumentedTest
+            -Pandroid.testInstrumentationRunnerArguments.mptunnelNativeVersion=${{ steps.mptunnel.outputs.version }}
+
+      - name: Decode and validate release keystore
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/android-release-keystore.jks"
+          printf '%s' "$APP_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          keytool -list \
+            -keystore "$keystore" \
+            -storepass "$APP_KEYSTORE_PASSWORD" \
+            -alias "$APP_KEYSTORE_ALIAS" >/dev/null
+          echo "ANDROID_RELEASE_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
+      - name: Build exactly two ABI splits and one universal release APK
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: V2rayNG
+        env:
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew licenseFdroidReleaseReport assembleFdroidRelease \
+            -PABI_FILTERS="$ANDROID_ABIS" \
+            -PUNIVERSAL_APK=true \
+            -Pandroid.injected.signing.store.file="$ANDROID_RELEASE_KEYSTORE" \
+            -Pandroid.injected.signing.store.password="$APP_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$APP_KEYSTORE_ALIAS" \
+            -Pandroid.injected.signing.key.password="$APP_KEY_PASSWORD"
+
+      - name: Verify signed release APK contract
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MPTUNNEL_VERSION: ${{ steps.mptunnel.outputs.version }}
+          MPTUNNEL_TAG: ${{ steps.mptunnel.outputs.tag }}
+          MPTUNNEL_COMMIT: ${{ steps.mptunnel.outputs.commit }}
+          MPTUNNEL_RELEASE_ID: ${{ steps.mptunnel.outputs.release_id }}
+          MPTUNNEL_ASSET: ${{ steps.mptunnel.outputs.asset }}
+          MPTUNNEL_ASSET_ID: ${{ steps.mptunnel.outputs.asset_id }}
+          MPTUNNEL_SHA256: ${{ steps.mptunnel.outputs.sha256 }}
+        run: |
+          .github/scripts/verify-release-apks.sh \
+            V2rayNG/app/build/outputs/apk/fdroid/release \
+            release
+
+      - name: Upload exact signed release payload
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: signed-release-${{ github.sha }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Publish verified GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download exact signed release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-release-${{ github.sha }}
+          path: release
+
+      - name: Validate release identity and exact inventory
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          provenance=release/build-provenance.json
+          test -f "$provenance"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$RELEASE_COMMIT" '
+              .schema_version == 1 and
+              .repository == $repository and
+              .tag == $tag and
+              .commit == $commit and
+              .application_id == "com.v2ray.ang.mpp.fdroid" and
+              (.mptunnel.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+              .mptunnel.tag == ("v" + .mptunnel.version) and
+              .mptunnel.asset == ("mptunnel-" + .mptunnel.version + "-android-jni.tar.gz") and
+              (.mptunnel.commit | test("^[0-9a-f]{40}$")) and
+              (.mptunnel.release_id | type) == "number" and .mptunnel.release_id > 0 and
+              (.mptunnel.asset_id | type) == "number" and .mptunnel.asset_id > 0 and
+              (.mptunnel.sha256 | test("^[0-9a-f]{64}$")) and
+              ([.apks[].abi] | sort) == ["arm64-v8a", "universal", "x86_64"] and
+              all(.apks[]; .sha256 | test("^[0-9a-f]{64}$"))
+            ' "$provenance" >/dev/null
+          expected=.release-expected.txt
+          actual=.release-actual.txt
+          {
+            jq -r '.apks[].name' "$provenance"
+            printf '%s\n' SHA256SUMS build-provenance.json
+          } | LC_ALL=C sort > "$expected"
+          find release -mindepth 1 -maxdepth 1 -type f -printf '%f\n' \
+            | LC_ALL=C sort > "$actual"
+          test "$(wc -l < "$expected")" = 5
+          test "$(uniq -d "$expected" | wc -l)" = 0
+          diff -u "$expected" "$actual"
+          if find release -mindepth 1 -maxdepth 1 ! -type f -print -quit \
+            | grep -q .; then
+            echo "release staging contains a non-regular entry" >&2
+            exit 1
+          fi
+          (
+            cd release
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Revalidate source and frozen MPTUNNEL release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          provenance=release/build-provenance.json
+
+          app_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          app_type="$(jq -er .object.type <<<"$app_ref")"
+          app_sha="$(jq -er .object.sha <<<"$app_ref")"
+          for _ in 1 2 3 4; do
+            case "$app_type" in
+              commit) break ;;
+              tag)
+                app_object="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${app_sha}")"
+                app_type="$(jq -er .object.type <<<"$app_object")"
+                app_sha="$(jq -er .object.sha <<<"$app_object")"
+                ;;
+              *) exit 1 ;;
+            esac
+          done
+          test "$app_type" = commit
+          test "$app_sha" = "$RELEASE_COMMIT"
+
+          .github/scripts/revalidate-mptunnel-provenance.sh "$provenance"
+
+      - name: Create owned draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "a GitHub Release already exists for $RELEASE_TAG" >&2
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "v2rayNG-MPP ${version}"
+          gh release view "$RELEASE_TAG" --json databaseId,isDraft,tagName \
+            > .release-created.json
+          test "$(jq -r .isDraft .release-created.json)" = true
+          test "$(jq -r .tagName .release-created.json)" = "$RELEASE_TAG"
+          jq -er .databaseId .release-created.json > .release-created-by-run
+
+      - name: Upload and freshly verify draft payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t payload < <(
+            find release -mindepth 1 -maxdepth 1 -type f -print | LC_ALL=C sort
+          )
+          test "${#payload[@]}" = 5
+          gh release upload "$RELEASE_TAG" "${payload[@]}"
+          gh release view "$RELEASE_TAG" --json assets \
+            --jq '.assets[].name' | LC_ALL=C sort > .release-assets.txt
+          diff -u .release-expected.txt .release-assets.txt
+          mkdir .release-download
+          gh release download "$RELEASE_TAG" --dir .release-download
+          while IFS= read -r asset; do
+            cmp --silent "release/$asset" ".release-download/$asset" || {
+              echo "freshly downloaded release asset differs: $asset" >&2
+              exit 1
+            }
+          done < .release-expected.txt
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > .release-published.json
+          test "$(jq -r .draft .release-published.json)" = false
+          test "$(jq -r .prerelease .release-published.json)" = false
+          test "$(jq -r .immutable .release-published.json)" = true
+          jq -r '.assets[].name' .release-published.json | LC_ALL=C sort \
+            > .release-assets.txt
+          diff -u .release-expected.txt .release-assets.txt
+          jq -r '.assets[] | [.name, .digest] | @tsv' \
+            .release-published.json > .release-digests.tsv
+          while IFS=$'\t' read -r asset digest; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "published asset has no GitHub SHA-256 digest: $asset" >&2
+              exit 1
+            }
+            actual="$(sha256sum "release/$asset" | awk '{print $1}')"
+            test "$digest" = "sha256:$actual"
+          done < .release-digests.tsv
+
+      - name: Remove an owned failed draft
+        if: ${{ always() && (failure() || cancelled()) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          marker=.release-created-by-run
+          [[ -f "$marker" ]] || exit 0
+          release_id="$(cat "$marker")"
+          [[ "$release_id" =~ ^[0-9]+$ ]] || exit 1
+          current=.release-cleanup.json
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            > "$current" 2>/dev/null; then
+            exit 0
+          fi
+          if [[ "$(jq -r .id "$current")" == "$release_id" \
+            && "$(jq -r .tag_name "$current")" == "$RELEASE_TAG" \
+            && "$(jq -r .draft "$current")" == true ]]; then
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          fi

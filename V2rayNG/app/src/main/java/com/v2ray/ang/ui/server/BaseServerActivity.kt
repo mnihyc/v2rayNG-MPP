@@ -368,12 +368,13 @@ abstract class BaseServerActivity : BaseComponentActivity() {
             toast(R.string.server_lab_remarks)
             return false
         }
-        if (state.address.isBlank()) {
+        if (state.configType != EConfigType.MPP && state.address.isBlank()) {
             toast(R.string.server_lab_address)
             return false
         }
         if (
             state.configType != EConfigType.HYSTERIA2 &&
+            state.configType != EConfigType.MPP &&
             (state.port.toIntOrNull() ?: 0) <= 0
         ) {
             toast(R.string.server_lab_port)

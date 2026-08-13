@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.ServersCache
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.handler.AngConfigManager
@@ -254,6 +255,7 @@ private fun ServerItemRow(
         isSelected = serverCache.guid == selectedGuid,
         subscriptionRemarks = subRemarks,
         doubleColumnDisplay = false,
+        showShare = profile.configType != EConfigType.MPP,
         onClick = { onSelectServer(serverCache.guid) },
         onShare = { onShareServer(serverCache.guid, profile) },
         onEdit = { onEditServer(serverCache.guid, profile) },
@@ -288,6 +290,7 @@ private fun ServerItemColumn(
             isSelected = serverCache.guid == selectedGuid,
             subscriptionRemarks = subRemarks,
             doubleColumnDisplay = doubleColumnDisplay,
+            showShare = profile.configType != EConfigType.MPP,
             onClick = { onSelectServer(serverCache.guid) },
             onEdit = { onEditServer(serverCache.guid, profile) },
             onShare = { onShareServer(serverCache.guid, profile) },
@@ -308,6 +311,7 @@ fun ServerListItem(
     isSelected: Boolean,
     subscriptionRemarks: String,
     doubleColumnDisplay: Boolean,
+    showShare: Boolean,
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onShare: () -> Unit,
@@ -354,7 +358,11 @@ fun ServerListItem(
                         Icon(painterResource(R.drawable.ic_more_vert_24dp), null, Modifier.size(24.dp))
                     }
                 } else {
-                    IconButton(onClick = onShare, Modifier.size(36.dp)) { Icon(painterResource(R.drawable.ic_share_24dp), null, Modifier.size(24.dp)) }
+                    if (showShare) {
+                        IconButton(onClick = onShare, Modifier.size(36.dp)) {
+                            Icon(painterResource(R.drawable.ic_share_24dp), null, Modifier.size(24.dp))
+                        }
+                    }
                     IconButton(onClick = onEdit, Modifier.size(36.dp)) { Icon(painterResource(R.drawable.ic_edit_24dp), null, Modifier.size(24.dp)) }
                     IconButton(onClick = onRemove, Modifier.size(36.dp)) { Icon(painterResource(R.drawable.ic_delete_24dp), null, Modifier.size(24.dp)) }
                 }

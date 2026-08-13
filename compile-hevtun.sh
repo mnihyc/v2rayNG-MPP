@@ -4,27 +4,27 @@ set -o pipefail
 set -o nounset
 # Set magic variables for current file & dir
 __dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-__file="${__dir}/$(basename "${BASH_SOURCE[0]}")"
-__base="$(basename ${__file} .sh)"
 if [[ ! -d $NDK_HOME ]]; then
   echo "Android NDK: NDK_HOME not found. please set env \$NDK_HOME"
   exit 1
 fi
-TMPDIR=$(mktemp -d)
+hev_tmp_root=$(mktemp -d)
 clear_tmp () {
-  rm -rf $TMPDIR
+  rm -rf "$hev_tmp_root"
 }
 trap 'echo -e "Aborted, error $? in command: $BASH_COMMAND"; trap ERR; clear_tmp; exit 1' ERR INT
 
-ABIS="armeabi-v7a arm64-v8a x86 x86_64"
+ABIS="${HEV_ABIS:-armeabi-v7a arm64-v8a x86 x86_64}"
 
-mkdir -p "$TMPDIR/jni"
-pushd "$TMPDIR"
+mkdir -p "$hev_tmp_root/jni"
+pushd "$hev_tmp_root"
 
 ln -s "$__dir/hev-socks5-tunnel" jni/hev-socks5-tunnel
 
 # 1) JNI shared library (libhev-socks5-tunnel.so) — loaded in-process by
 #    com.v2ray.ang.service.TProxyService for the VpnService hev tun mode.
+# The command-substitution-looking text below is literal Android.mk syntax.
+# shellcheck disable=SC2016
 echo 'include $(call all-subdir-makefiles)' > jni/Android.mk
 
 "$NDK_HOME/ndk-build" \
@@ -32,8 +32,8 @@ echo 'include $(call all-subdir-makefiles)' > jni/Android.mk
     APP_BUILD_SCRIPT=jni/Android.mk \
     "APP_ABI=$ABIS" \
     APP_PLATFORM=android-24 \
-    NDK_LIBS_OUT="$TMPDIR/libs" \
-    NDK_OUT="$TMPDIR/obj" \
+    NDK_LIBS_OUT="$hev_tmp_root/libs" \
+    NDK_OUT="$hev_tmp_root/obj" \
     "APP_CFLAGS=-O3 -DPKGNAME=com/v2ray/ang/service" \
     "APP_LDFLAGS=-Wl,--build-id=none -Wl,--hash-style=gnu" \
 
@@ -85,8 +85,8 @@ EXECMK
     APP_BUILD_SCRIPT=jni/exec.mk \
     "APP_ABI=$ABIS" \
     APP_PLATFORM=android-24 \
-    NDK_LIBS_OUT="$TMPDIR/libs-exec" \
-    NDK_OUT="$TMPDIR/obj-exec" \
+    NDK_LIBS_OUT="$hev_tmp_root/libs-exec" \
+    NDK_OUT="$hev_tmp_root/obj-exec" \
     "APP_CFLAGS=-O3" \
     "APP_LDFLAGS=-Wl,--build-id=none -Wl,--hash-style=gnu" \
 
@@ -94,10 +94,10 @@ EXECMK
 # lib*.so so the APK installer extracts it into nativeLibraryDir as an
 # executable file (filename distinct from the JNI library above).
 mkdir -p "$__dir/libs"
-cp -r "$TMPDIR/libs/"* "$__dir/libs/"
+cp -r "$hev_tmp_root/libs/"* "$__dir/libs/"
 for abi in $ABIS; do
-  cp "$TMPDIR/libs-exec/$abi/hevsockstun" "$__dir/libs/$abi/libhevsockstun.so"
+  cp "$hev_tmp_root/libs-exec/$abi/hevsockstun" "$__dir/libs/$abi/libhevsockstun.so"
 done
 
 popd
-rm -rf $TMPDIR
+rm -rf "$hev_tmp_root"

@@ -82,7 +82,11 @@ class CoreRootService : Service(), ServiceControl {
     }
 
     override fun stopService() {
-        stopSelf()
+        if (!CoreServiceManager.isMptunnelActive() || CoreServiceManager.stopCoreLoop()) {
+            stopSelf()
+        } else {
+            LogUtil.e(AppConfig.TAG, "StartCore-Root: Core stop incomplete; retaining service")
+        }
     }
 
     override fun vpnProtect(socket: Int): Boolean = true

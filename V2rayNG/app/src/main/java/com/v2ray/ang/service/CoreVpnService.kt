@@ -149,7 +149,11 @@ class CoreVpnService : VpnService(), ServiceControl {
             return false
         }
 
-        runTun2socks()
+        if (!runTun2socks()) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: HEV TUN bridge failed to start")
+            stopAllService()
+            return false
+        }
         return true
     }
 
@@ -302,35 +306,53 @@ class CoreVpnService : VpnService(), ServiceControl {
      * Runs the tun2socks process.
      * Starts the tun2socks process with the appropriate parameters.
      */
-    private fun runTun2socks() {
+    private fun runTun2socks(): Boolean {
         if (SettingsManager.isUsingHevTun()) {
             tun2SocksService = TProxyService(
                 context = applicationContext,
                 vpnInterface = mInterface,
                 isRunningProvider = { isRunning },
-                restartCallback = { runTun2socks() }
+                restartCallback = {
+                    if (!runTun2socks()) {
+                        LogUtil.e(AppConfig.TAG, "StartCore-VPN: HEV TUN bridge restart failed")
+                        stopAllService()
+                    }
+                }
             )
         } else {
             tun2SocksService = null
         }
 
-        tun2SocksService?.startTun2Socks()
+        return tun2SocksService?.startTun2Socks() ?: true
     }
 
-    private fun stopAllService(isForced: Boolean = true) {
+    private fun stopAllService(isForced: Boolean = true): Boolean {
 //        val configName = defaultDPreference.getPrefString(PREF_CURR_CONFIG_GUID, "")
 //        val emptyInfo = VpnNetworkInfo()
 //        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
 //        saveVpnNetworkInfo(configName, info)
         unlockStart()
-        isRunning = false
 
+        // A timed-out native MPTUNNEL stop must retain its owning VpnService and TUN. This
+        // also leaves HEV in place, allowing another explicit stop request to retry safely.
+        val stopCoreBeforeTun = CoreServiceManager.isMptunnelActive()
+        if (stopCoreBeforeTun && !CoreServiceManager.stopCoreLoop()) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Core stop incomplete; retaining service and VPN interface")
+            return false
+        }
+
+        isRunning = false
         tun2SocksService?.stopTun2Socks()
         tun2SocksService = null
 
         RootLanSharing.stopClientSharing(this)
 
-        CoreServiceManager.stopCoreLoop()
+        // Preserve Xray's established ordering: release traffic capture before requesting its
+        // asynchronous core stop. MPTUNNEL was stopped synchronously above because its false
+        // result requires retaining all owner resources.
+        if (!stopCoreBeforeTun) {
+            CoreServiceManager.stopCoreLoop()
+        }
 
         if (isForced) {
             //stopSelf has to be called ahead of mInterface.close(). otherwise v2ray core cannot be stooped
@@ -358,6 +380,7 @@ class CoreVpnService : VpnService(), ServiceControl {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
             }
         }
+        return true
     }
 
     fun tryLockStart(): Boolean {

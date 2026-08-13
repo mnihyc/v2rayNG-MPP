@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
@@ -15,21 +16,30 @@ import com.v2ray.ang.R
 import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.OutboundTrafficStat
+import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.BrowserDialerMode
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.helper.MessageHelper
+import com.v2ray.ang.mpp.MptunnelNative
+import com.v2ray.ang.mpp.MptunnelRuntimeWatchdogPolicy
+import com.v2ray.ang.mpp.SocketProtector
 import com.v2ray.ang.service.DialerNativeService
 import com.v2ray.ang.service.DialerWebviewService
 import com.v2ray.ang.service.NetworkMonitor
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.jvm.Volatile
 import libv2ray.CoreCallbackHandler
@@ -40,12 +50,26 @@ import java.net.InetSocketAddress
 
 object CoreServiceManager {
 
-    private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
+    private val coreControllerDelegate = lazy {
+        CoreNativeManager.newCoreController(CoreCallback())
+    }
+    private val coreController: CoreController by coreControllerDelegate
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
     private var processFinder: XrayProcessFinder? = null
     private var browserDialer: IDialerService? = null
     private var networkMonitor: NetworkMonitor? = null
+    private var activeEngine = ActiveEngine.NONE
+    private var mptunnelWatchdogJob: Job? = null
+    private var mptunnelWatchdogGeneration = 0L
+
+    private const val MPTUNNEL_WATCHDOG_INTERVAL_MS = 500L
+
+    private enum class ActiveEngine {
+        NONE,
+        XRAY,
+        MPTUNNEL,
+    }
 
     @Volatile
     private var isReloading = false
@@ -56,19 +80,17 @@ object CoreServiceManager {
     var serviceControl: SoftReference<ServiceControl>? = null
         set(value) {
             field = value
-            val service = value?.get()?.getService()
-            CoreNativeManager.initCoreEnv(service)
-            if (service != null && processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                processFinder = XrayProcessFinder(service)
-                coreController.registerProcessFinder(processFinder)
-            }
         }
 
     /**
      * Checks if the V2Ray service is running.
      * @return True if the service is running, false otherwise.
      */
-    fun isRunning() = coreController.isRunning
+    fun isRunning() = when (activeEngine) {
+        ActiveEngine.MPTUNNEL -> MptunnelNative.isRunning()
+        ActiveEngine.XRAY -> coreControllerDelegate.isInitialized() && coreController.isRunning
+        ActiveEngine.NONE -> false
+    }
 
     /**
      * Gets the name of the currently running server.
@@ -76,11 +98,16 @@ object CoreServiceManager {
      */
     fun getRunningServerName() = currentConfig?.remarks.orEmpty()
 
+    /** MPTUNNEL must stop before its owning service, HEV bridge, and VPN TUN are released. */
+    @Synchronized
+    fun isMptunnelActive(): Boolean = activeEngine == ActiveEngine.MPTUNNEL
+
     /**
      * Refer to the official documentation for [registerReceiver](https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int):
      * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
      * Starts the V2Ray core service.
      */
+    @Synchronized
     fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
         if (isRunning()) {
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
@@ -97,10 +124,13 @@ object CoreServiceManager {
             doStartCoreLoop(service, vpnInterface)
             return true
         } catch (e: Exception) {
+            val stoppedCleanly = stopEngineAfterFailedStart()
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
-            NotificationManager.cancelNotification()
+            if (stoppedCleanly) {
+                NotificationManager.cancelNotification()
+            }
             return false
         }
     }
@@ -123,14 +153,60 @@ object CoreServiceManager {
         val guid = MmkvManager.getSelectServer() ?: error("No server selected")
         val config = MmkvManager.decodeServerConfig(guid) ?: error("Failed to decode server config")
 
-        LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting core loop for ${config.remarks}")
+        val engineName = if (config.configType == EConfigType.MPP) "MPTUNNEL" else "Xray"
+        LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting $engineName for ${config.remarks}")
+        currentConfig = config
+        if (config.configType == EConfigType.MPP) {
+            launchMptunnel(service, guid, config)
+        } else {
+            launchXray(service, guid, config, vpnInterface)
+        }
+
+        if (!isRunning()) {
+            error("$engineName failed to start")
+        }
+
+        NotificationManager.showNotification(currentConfig)
+        if (!isReload) {
+            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+        }
+        NotificationManager.startSpeedNotification()
+        LogUtil.i(AppConfig.TAG, "StartCore-Manager: $engineName started successfully")
+    }
+
+    private fun launchMptunnel(service: Service, guid: String, config: ProfileItem) {
+        stopBrowserDialer(reconcileXray = false)
+        activeEngine = ActiveEngine.MPTUNNEL
+        val protector = SocketProtector { fd ->
+            serviceControl?.get()?.vpnProtect(fd) == true
+        }
+        val started = MptunnelNative.start(
+            context = service,
+            profileId = guid,
+            profile = config,
+            socksPort = SettingsManager.getSocksPort(),
+            proxyUsername = SettingsManager.getSocksUsername(),
+            proxyPassword = SettingsManager.getSocksPassword(),
+            protector = protector,
+        )
+        if (!started) error("MPTUNNEL native runtime rejected startup")
+        startMptunnelWatchdog(serviceControl?.get() ?: error("MPTUNNEL service owner is unavailable"))
+    }
+
+    private fun launchXray(
+        service: Service,
+        guid: String,
+        config: ProfileItem,
+        vpnInterface: ParcelFileDescriptor?,
+    ) {
+        initializeXrayHost(service)
         val result = CoreConfigManager.getV2rayConfig(service, guid)
         LogUtil.d(AppConfig.TAG, result.content)
         if (!result.status) {
             error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
         }
 
-        currentConfig = config
+        activeEngine = ActiveEngine.XRAY
         var tunFd = vpnInterface?.fd ?: 0
         val dialerMode = BrowserDialerMode.from(config.browserDialerMode)
         val dialerAddr = if (dialerMode != null) {
@@ -142,20 +218,12 @@ object CoreServiceManager {
             tunFd = 0
         }
 
-        NotificationManager.showNotification(currentConfig)
         if (dialerAddr.isNotNullEmpty()) {
             CoreNativeManager.reconcileBrowserDialer(dialerAddr)
         }
         coreController.startLoop(result.content, tunFd)
 
-        if (!isRunning()) {
-            error("Core failed to start")
-        }
-
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
-        }
+        stopBrowserDialer(reconcileXray = false)
         when (dialerMode) {
             BrowserDialerMode.OKHTTP -> {
                 browserDialer = DialerNativeService()
@@ -169,12 +237,14 @@ object CoreServiceManager {
 
             else -> {}
         }
+    }
 
-        if (!isReload) {
-            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+    private fun initializeXrayHost(service: Service) {
+        CoreNativeManager.initCoreEnv(service)
+        if (processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            processFinder = XrayProcessFinder(service)
+            coreController.registerProcessFinder(processFinder)
         }
-        NotificationManager.startSpeedNotification()
-        LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 
     /**
@@ -182,29 +252,51 @@ object CoreServiceManager {
      * Unregisters broadcast receivers, stops notifications, and shuts down plugins.
      * @return True if the core was stopped successfully, false otherwise.
      */
+    @Synchronized
     fun stopCoreLoop(): Boolean {
         val service = getService() ?: return false
+
+        val stoppedEngine = activeEngine
+        if (stoppedEngine == ActiveEngine.MPTUNNEL) {
+            cancelMptunnelWatchdog()
+        }
+        val stoppedCleanly = when (stoppedEngine) {
+            ActiveEngine.MPTUNNEL -> {
+                try {
+                    MptunnelNative.stop()
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop MPTUNNEL", e)
+                    false
+                }
+            }
+
+            ActiveEngine.XRAY -> {
+                if (coreControllerDelegate.isInitialized() && coreController.isRunning) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            coreController.stopLoop()
+                        } catch (e: Exception) {
+                            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop Xray loop", e)
+                        }
+                    }
+                }
+                true
+            }
+
+            ActiveEngine.NONE -> true
+        }
+        if (!stoppedCleanly) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: MPTUNNEL stop timed out")
+            serviceControl?.get()?.let(::startMptunnelWatchdog)
+            return false
+        }
+        activeEngine = ActiveEngine.NONE
 
         networkMonitor?.unregister()
         networkMonitor = null
         currentVpnInterface = null
 
-        if (isRunning()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    coreController.stopLoop()
-                } catch (e: Exception) {
-                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
-                }
-            }
-        }
-
-        // Close existing browser dialer
-        CoreNativeManager.reconcileBrowserDialer("")
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
-        }
+        stopBrowserDialer(reconcileXray = stoppedEngine == ActiveEngine.XRAY)
 
         MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
         NotificationManager.cancelNotification()
@@ -216,6 +308,118 @@ object CoreServiceManager {
         }
 
         return true
+    }
+
+    private fun stopEngineAfterFailedStart(): Boolean {
+        if (activeEngine == ActiveEngine.MPTUNNEL) {
+            cancelMptunnelWatchdog()
+        }
+        val stoppedCleanly = when (activeEngine) {
+            ActiveEngine.MPTUNNEL -> runCatching { MptunnelNative.stop() }.getOrDefault(false)
+            ActiveEngine.XRAY -> if (coreControllerDelegate.isInitialized()) {
+                runCatching { coreController.stopLoop() }
+                true
+            } else {
+                true
+            }
+            ActiveEngine.NONE -> true
+        }
+        if (!stoppedCleanly) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: MPTUNNEL cleanup timed out; retaining owner")
+            serviceControl?.get()?.let(::startMptunnelWatchdog)
+            return false
+        }
+        activeEngine = ActiveEngine.NONE
+        currentConfig = null
+        return true
+    }
+
+    /**
+     * Mirrors Xray's native shutdown callback for the JNI runtime, which currently exposes state
+     * by polling. Each watcher is tied to both a generation and the exact owning ServiceControl:
+     * an obsolete watcher cannot stop a replacement service after reload or a fast stop/start.
+     */
+    @Synchronized
+    private fun startMptunnelWatchdog(owner: ServiceControl) {
+        cancelMptunnelWatchdog()
+        val generation = mptunnelWatchdogGeneration
+        mptunnelWatchdogJob = CoroutineScope(Dispatchers.IO).launch {
+            var stoppingSinceMs: Long? = null
+            try {
+                while (true) {
+                    delay(MPTUNNEL_WATCHDOG_INTERVAL_MS)
+                    val state = MptunnelNative.state()
+                    val nowMs = SystemClock.elapsedRealtime()
+                    if (state == "stopping") {
+                        if (stoppingSinceMs == null) stoppingSinceMs = nowMs
+                    } else {
+                        stoppingSinceMs = null
+                    }
+                    val stoppingElapsedMs = stoppingSinceMs?.let(nowMs::minus) ?: 0L
+                    if (MptunnelRuntimeWatchdogPolicy.shouldStopService(state, stoppingElapsedMs)) {
+                        val reportedState = if (state == "stopping") "stopping-timeout" else state
+                        handleMptunnelTerminalState(generation, owner, reportedState)
+                        return@launch
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: MPTUNNEL watchdog failed", failure)
+                handleMptunnelTerminalState(generation, owner, "unavailable")
+            }
+        }
+    }
+
+    @Synchronized
+    private fun cancelMptunnelWatchdog() {
+        mptunnelWatchdogGeneration++
+        mptunnelWatchdogJob?.cancel()
+        mptunnelWatchdogJob = null
+    }
+
+    @Synchronized
+    private fun handleMptunnelTerminalState(
+        generation: Long,
+        owner: ServiceControl,
+        state: String,
+    ) {
+        if (!MptunnelRuntimeWatchdogPolicy.canStopOwner(
+                watchGeneration = generation,
+                currentGeneration = mptunnelWatchdogGeneration,
+                isMptunnelActive = activeEngine == ActiveEngine.MPTUNNEL,
+                ownsService = serviceControl?.get() === owner,
+            )
+        ) {
+            return
+        }
+
+        // Invalidate this generation before re-entering service teardown. stopCoreLoop() will
+        // retry nativeStop and cannot accidentally re-arm this already-terminal generation.
+        cancelMptunnelWatchdog()
+        val message = "MPTUNNEL native runtime terminated ($state)"
+        LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message")
+        runCatching {
+            MessageHelper.sendMsg2UI(owner.getService(), AppConfig.MSG_STATE_START_FAILURE, message)
+        }.onFailure { failure ->
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to report MPTUNNEL termination", failure)
+        }
+        try {
+            owner.stopService()
+        } catch (failure: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop MPTUNNEL owner", failure)
+            if (activeEngine == ActiveEngine.MPTUNNEL && serviceControl?.get() === owner) {
+                startMptunnelWatchdog(owner)
+            }
+        }
+    }
+
+    private fun stopBrowserDialer(reconcileXray: Boolean) {
+        if (reconcileXray && coreControllerDelegate.isInitialized()) {
+            CoreNativeManager.reconcileBrowserDialer("")
+        }
+        browserDialer?.stop()
+        browserDialer = null
     }
 
     /**
@@ -244,6 +448,7 @@ object CoreServiceManager {
      *
      * @return True if the core is running again.
      */
+    @Synchronized
     private fun reloadCore(): Boolean {
         if (isReloading) return false
         val service = getService() ?: return false
@@ -255,7 +460,18 @@ object CoreServiceManager {
             isReloading = true
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload start...")
 
-            coreController.stopLoop()
+            when (activeEngine) {
+                ActiveEngine.MPTUNNEL -> {
+                    cancelMptunnelWatchdog()
+                    if (!MptunnelNative.stop()) {
+                        serviceControl?.get()?.let(::startMptunnelWatchdog)
+                        error("MPTUNNEL stop timed out during network handover")
+                    }
+                }
+                ActiveEngine.XRAY -> coreController.stopLoop()
+                ActiveEngine.NONE -> return false
+            }
+            activeEngine = ActiveEngine.NONE
             launchCore(service, tunFd, isReload = true)
 
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload finished")
@@ -264,6 +480,9 @@ object CoreServiceManager {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to reload core: $message", e)
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
+            if (stopEngineAfterFailedStart()) {
+                serviceControl?.get()?.stopService()
+            }
             false
         } finally {
             isReloading = false
@@ -277,6 +496,10 @@ object CoreServiceManager {
     fun queryAllOutboundTrafficStats(): List<OutboundTrafficStat> {
         // The stats manager is gone once the core stops, querying it then reaches into freed state.
         if (!isRunning()) return emptyList()
+
+        if (activeEngine == ActiveEngine.MPTUNNEL) {
+            return MptunnelNative.queryOutboundTrafficStats()
+        }
 
         val payload = coreController.queryAllOutboundTrafficStats()
 
@@ -307,7 +530,7 @@ object CoreServiceManager {
      * Tests with primary URL first, then falls back to alternative URL if needed.
      * Also fetches remote IP information if the delay test was successful.
      */
-    private fun measureV2rayDelay() {
+    private fun measureCoreDelay() {
         if (!isRunning()) {
             return
         }
@@ -318,16 +541,16 @@ object CoreServiceManager {
             var errorStr = ""
 
             try {
-                time = coreController.measureDelay(SettingsManager.getDelayTestUrl())
+                time = measureDelay(SettingsManager.getDelayTestUrl())
             } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to measure delay", e)
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to measure primary delay", e)
                 errorStr = e.message?.substringAfter("\":") ?: "empty message"
             }
             if (time == -1L) {
                 try {
-                    time = coreController.measureDelay(SettingsManager.getDelayTestUrl(true))
+                    time = measureDelay(SettingsManager.getDelayTestUrl(true))
                 } catch (e: Exception) {
-                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to measure delay", e)
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to measure fallback delay", e)
                     errorStr = e.message?.substringAfter("\":") ?: "empty message"
                 }
             }
@@ -346,6 +569,25 @@ object CoreServiceManager {
                 }
             }
         }
+    }
+
+    private fun measureDelay(url: String): Long {
+        if (activeEngine == ActiveEngine.XRAY) {
+            return coreController.measureDelay(url)
+        }
+        if (activeEngine != ActiveEngine.MPTUNNEL) return -1L
+
+        val started = SystemClock.elapsedRealtime()
+        if (HttpUtil.getUrlContent(
+            UrlContentRequest(
+                url = url,
+                timeout = 10_000,
+                httpPort = SettingsManager.getHttpPort(),
+                proxyUsername = SettingsManager.getSocksUsername(),
+                proxyPassword = SettingsManager.getSocksPassword(),
+            )
+        ) == null) return -1L
+        return SystemClock.elapsedRealtime() - started
     }
 
     /**
@@ -475,7 +717,7 @@ object CoreServiceManager {
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {
-                    measureV2rayDelay()
+                    measureCoreDelay()
                 }
             }
 

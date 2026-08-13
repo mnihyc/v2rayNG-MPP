@@ -112,12 +112,18 @@ object RootProxyManager {
         val socksUsername = SettingsManager.getSocksUsername()
         val socksPassword = SettingsManager.getSocksPassword()
         val port = SettingsManager.getSocksPort()
+        val ipv6 = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)
+        val hevConfig = buildHevConfig(
+            socksUsername = socksUsername,
+            socksPassword = socksPassword,
+            socksPort = port,
+            ipv6 = ipv6,
+        ) ?: return null
         val runDir = File(context.filesDir, AppConfig.ROOT_RUNTIME_DIR).apply { mkdirs() }
         val pidFile = File(runDir, "tun2socks.pid").absolutePath
         val logFile = File(runDir, "tun2socks.log").absolutePath
         val cfgFile = File(runDir, "tun2socks.yml").absolutePath
         val oomGuardPid = File(runDir, "oomguard.pid").absolutePath
-        val ipv6 = MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)
         val lanShare = forceLanShare || MmkvManager.decodeSettingsBool(AppConfig.PREF_ROOT_LAN_SHARING)
         val corePid = Process.myPid()
 
@@ -147,7 +153,7 @@ object RootProxyManager {
             // (loopback, already RETURNed by the 127.0.0.0/8 bypass) and the core's real outbound
             // runs as the app uid (RETURNed by the uid-owner rule), so traffic can't loop.
             appendLine("cat > '$cfgFile' <<'HEVCFG'")
-            append(buildHevConfig(socksUsername = socksUsername, socksPassword = socksPassword, socksPort = port, ipv6 = ipv6))
+            append(hevConfig)
             appendLine("HEVCFG")
             appendLine("nohup \"\$BIN\" '$cfgFile' >'$logFile' 2>&1 &")
             appendLine("T2S_PID=\$!")
@@ -197,7 +203,16 @@ object RootProxyManager {
      * tun address when IPv6 is enabled; whether v6 actually flows in is decided separately by
      * the v6 route into [TABLE].
      */
-    private fun buildHevConfig(socksUsername: String?, socksPassword: String?, socksPort: Int, ipv6: Boolean): String {
+    private fun buildHevConfig(socksUsername: String?, socksPassword: String?, socksPort: Int, ipv6: Boolean): String? {
+        val escapedSocksUsername = socksUsername?.let(::escapeHevYamlCredential)
+        val escapedSocksPassword = socksPassword?.let(::escapeHevYamlCredential)
+        if (
+            socksUsername != null && escapedSocksUsername == null ||
+            socksPassword != null && escapedSocksPassword == null
+        ) {
+            LogUtil.e(AppConfig.TAG, "RootProxyManager: local proxy credentials must be single-line")
+            return null
+        }
         val v4 = AppConfig.ROOT_TUN_ADDR_V4.substringBefore("/")
         val v6 = AppConfig.ROOT_TUN_ADDR_V6.substringBefore("/")
         return buildString {
@@ -211,13 +226,17 @@ object RootProxyManager {
             appendLine("  port: $socksPort")
             appendLine("  address: '${AppConfig.LOOPBACK}'")
             appendLine("  udp: 'udp'")
-            if (socksUsername != null && socksPassword != null) {
-                appendLine("  username: '$socksUsername'")
-                appendLine("  password: '$socksPassword'")
+            if (escapedSocksUsername != null && escapedSocksPassword != null) {
+                appendLine("  username: '$escapedSocksUsername'")
+                appendLine("  password: '$escapedSocksPassword'")
             }
             appendLine("  tcp-fastopen: true")
         }
     }
+
+    internal fun escapeHevYamlCredential(value: String): String? =
+        value.takeUnless { candidate -> candidate.any { it == '\r' || it == '\n' } }
+            ?.replace("'", "''")
 
     /**
      * mangle OUTPUT marking chain (ipv4/ipv6). Mirrors VpnService's capture behavior:

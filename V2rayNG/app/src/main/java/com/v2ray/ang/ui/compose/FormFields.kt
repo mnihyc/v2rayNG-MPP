@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -37,7 +39,11 @@ fun FormTextField(
     enabled: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
     placeholder: String? = null,
+    minLines: Int = 1,
     maxLines: Int = 5,
+    textStyle: TextStyle = TextStyle.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingIcon: (@Composable () -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -50,9 +56,13 @@ fun FormTextField(
             label = { Text(label) },
             placeholder = placeholder?.let { { Text(it) } },
             singleLine = false,
+            minLines = minLines,
             maxLines = maxLines,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            textStyle = textStyle,
+            visualTransformation = visualTransformation,
+            trailingIcon = trailingIcon,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent,

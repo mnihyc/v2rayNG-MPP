@@ -10,11 +10,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "com.v2ray.ang.mpp"
         minSdk = 24
         targetSdk = 37
         versionCode = 743
-        versionName = "2.3.3"
+        versionName = "2.3.3-mpp.1"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -31,7 +31,9 @@ android {
                         "x86"
                     )
                 }
-                isUniversalApk = abiFilterList.isNullOrEmpty()
+                isUniversalApk = (properties["UNIVERSAL_APK"] as? String)
+                    ?.toBooleanStrictOrNull()
+                    ?: abiFilterList.isNullOrEmpty()
             }
         }
 
@@ -92,7 +94,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "v2rayNG_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "v2rayNG-MPP_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -112,7 +114,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "v2rayNG_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "v2rayNG-MPP_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
