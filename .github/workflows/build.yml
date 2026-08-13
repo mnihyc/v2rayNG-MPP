@@ -62,7 +62,7 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
           packages: >-
-            platforms;android-37
+            platforms;android-37.0
             build-tools;37.0.0
             platform-tools
             emulator
