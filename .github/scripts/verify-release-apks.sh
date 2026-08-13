@@ -157,14 +157,26 @@ for kind in arm64-v8a x86_64 universal; do
   "$zipalign" -c -P 16 4 "$apk"
   signature_report="$work_root/$kind-signature.txt"
   "$apksigner" verify --verbose --print-certs "$apk" > "$signature_report"
-  current_cert="$(
-    sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$signature_report" |
+  mapfile -t signer_counts < <(
+    sed -nE 's/^Number of signers: ([0-9]+)$/\1/p' "$signature_report"
+  )
+  [[ "${#signer_counts[@]}" == 1 && "${signer_counts[0]}" == 1 ]] || {
+    echo "$output_file does not have exactly one APK signer" >&2
+    exit 1
+  }
+  mapfile -t certificate_digests < <(
+    sed -nE \
+      -e 's/^Signer #1 certificate SHA-256 digest: ([0-9A-Fa-f]{64})$/\1/p' \
+      -e 's/^V[0-9]+([.][0-9]+)? Signer: certificate SHA-256 digest: ([0-9A-Fa-f]{64})$/\2/p' \
+      "$signature_report" |
+      LC_ALL=C tr '[:upper:]' '[:lower:]' |
       LC_ALL=C sort -u
-  )"
-  [[ "$current_cert" =~ ^[0-9a-f]{64}$ ]] || {
+  )
+  [[ "${#certificate_digests[@]}" == 1 ]] || {
     echo "$output_file has no single verifiable signing certificate" >&2
     exit 1
   }
+  current_cert="${certificate_digests[0]}"
   if [[ -z "$cert_digest" ]]; then
     cert_digest="$current_cert"
   else
