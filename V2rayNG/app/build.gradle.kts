@@ -19,9 +19,6 @@ android {
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         val packagedAbis = abiFilterList?.takeIf { it.isNotEmpty() }
             ?: listOf("arm64-v8a", "x86_64")
-        ndk {
-            abiFilters += packagedAbis
-        }
         splits {
             abi {
                 isEnable = true
@@ -143,6 +140,10 @@ android {
 
     packaging {
         jniLibs {
+            excludes += setOf(
+                "**/armeabi-v7a/**",
+                "**/x86/**"
+            )
             useLegacyPackaging = true
         }
     }

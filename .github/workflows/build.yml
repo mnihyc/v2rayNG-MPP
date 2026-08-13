@@ -136,6 +136,30 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.class=com.v2ray.ang.mpp.MptunnelNativeInstrumentedTest
             -Pandroid.testInstrumentationRunnerArguments.mptunnelNativeVersion=${{ steps.mptunnel.outputs.version }}
 
+      - name: Verify branch universal APK native ABI inventory
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        working-directory: V2rayNG
+        run: |
+          set -euo pipefail
+          ./gradlew assembleFdroidDebug \
+            -PABI_FILTERS="$ANDROID_ABIS" \
+            -PUNIVERSAL_APK=true
+          metadata=app/build/outputs/apk/fdroid/debug/output-metadata.json
+          jq -e '
+            (.elements | length) == 3 and
+            ([.elements[] | select(.type == "UNIVERSAL")] | length) == 1
+          ' "$metadata" >/dev/null
+          universal="$(jq -er '.elements[] | select(.type == "UNIVERSAL") | .outputFile' "$metadata")"
+          mapfile -t expected_abis < <(tr ';' '\n' <<<"$ANDROID_ABIS" | LC_ALL=C sort)
+          mapfile -t packaged_abis < <(
+            zipinfo -1 "app/build/outputs/apk/fdroid/debug/$universal" |
+              sed -n 's#^lib/\([^/]*\)/[^/]*$#\1#p' |
+              LC_ALL=C sort -u
+          )
+          diff -u \
+            <(printf '%s\n' "${expected_abis[@]}") \
+            <(printf '%s\n' "${packaged_abis[@]}")
+
       - name: Decode and validate release keystore
         if: startsWith(github.ref, 'refs/tags/')
         env:
