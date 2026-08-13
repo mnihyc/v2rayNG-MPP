@@ -14,21 +14,19 @@ android {
         minSdk = 24
         targetSdk = 37
         versionCode = 743
-        versionName = "2.3.3-mpp.2"
+        versionName = "2.3.3-mpp.3"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
+        val packagedAbis = abiFilterList?.takeIf { it.isNotEmpty() }
+            ?: listOf("arm64-v8a", "x86_64")
+        ndk {
+            abiFilters += packagedAbis
+        }
         splits {
             abi {
                 isEnable = true
                 reset()
-                if (!abiFilterList.isNullOrEmpty()) {
-                    include(*abiFilterList.toTypedArray())
-                } else {
-                    include(
-                        "arm64-v8a",
-                        "x86_64"
-                    )
-                }
+                include(*packagedAbis.toTypedArray())
                 isUniversalApk = (properties["UNIVERSAL_APK"] as? String)
                     ?.toBooleanStrictOrNull()
                     ?: abiFilterList.isNullOrEmpty()
