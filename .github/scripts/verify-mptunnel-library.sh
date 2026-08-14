@@ -49,8 +49,11 @@ expected_symbols="$(mktemp)"
 actual_symbols="$(mktemp)"
 trap 'rm -f "$expected_symbols" "$actual_symbols"' EXIT
 printf '%s\n' \
-  Java_com_v2ray_ang_mpp_MptunnelNative_nativeDeleteProfile \
+  Java_com_v2ray_ang_mpp_MptunnelNative_nativeFinalizeEditor \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeIsRunning \
+  Java_com_v2ray_ang_mpp_MptunnelNative_nativeMigrateEditor \
+  Java_com_v2ray_ang_mpp_MptunnelNative_nativePatchEditor \
+  Java_com_v2ray_ang_mpp_MptunnelNative_nativeProjectEditor \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeStart \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeState \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeStatsJson \

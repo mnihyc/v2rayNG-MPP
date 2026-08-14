@@ -51,11 +51,13 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.mpp.MppConfigRenderer
+import com.v2ray.ang.mpp.MppEditorProjection
 import com.v2ray.ang.mpp.MppMaterialCodec
 import com.v2ray.ang.mpp.MppPathParser
 import com.v2ray.ang.mpp.MppPathUnderlay
 import com.v2ray.ang.mpp.MppProfileValidator
 import com.v2ray.ang.mpp.MppValidationError
+import com.v2ray.ang.mpp.MptunnelNative
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.ManagedContentField
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
@@ -68,6 +70,7 @@ class ServerMppActivity : BaseServerActivity() {
     override val serverConfigType: EConfigType = EConfigType.MPP
 
     private var pendingContentImport: ((ByteArray) -> Unit)? = null
+    private var activeUiState: ServerUiState? = null
     private val contentImportLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -94,21 +97,11 @@ class ServerMppActivity : BaseServerActivity() {
         }.apply {
             configType = EConfigType.MPP
         }
+        activeUiState = uiState
 
-        // A null path list belongs to the original fixed TCP/UDP schema. Normalize it only when
-        // the structured editor is actually shown so raw-TOML profiles remain byte-for-byte raw.
-        LaunchedEffect(uiState.mppConfig.useRawToml) {
-            val config = uiState.mppConfig
-            if (!config.useRawToml && config.paths == null) {
-                // The legacy schema kept the endpoint host in ProfileItem.server. A freshly
-                // created MPP profile has no server yet, and the structured editor no longer has
-                // a second top-level Address authority. Seed a valid, immediately editable host
-                // so a new profile opens with guided path controls instead of an invalid raw URI.
-                val seedHost = uiState.address.ifBlank { DEFAULT_NEW_PROFILE_HOST }
-                val paths = config.effectivePaths(seedHost)
-                uiState.mppConfig = config.copy(paths = paths)
-                uiState.syncFromPaths(paths)
-            }
+        LaunchedEffect(Unit) {
+            runCatching { initializeCanonicalEditor(uiState) }
+                .onFailure { toast(R.string.server_mpp_error_raw_toml) }
         }
 
         ServerEditorScaffold(
@@ -125,11 +118,46 @@ class ServerMppActivity : BaseServerActivity() {
     }
 
     override fun validateProtocolConfig(config: ProfileItem): Boolean {
-        val mpp = config.mpp ?: run {
+        var mpp = config.mpp ?: run {
             toast(R.string.server_mpp_error_path_required)
             return false
         }
-        val error = MppProfileValidator.validate(mpp) ?: return true
+        if (!mpp.useRawToml && activeUiState?.mppGuidedDraftInvalid == true) {
+            toast(R.string.server_mpp_error_advanced_tuning)
+            return false
+        }
+        if (mpp.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+            !mpp.useRawToml
+        ) {
+            val synchronized = runCatching {
+                val projection = MptunnelNative.projectEditor(mpp.editorToml)
+                val document = MptunnelNative.patchEditor(mpp.editorToml, projection)
+                projection.applyTo(mpp, document).copy(useRawToml = mpp.useRawToml)
+            }.getOrElse {
+                toast(R.string.server_mpp_error_raw_toml)
+                return false
+            }
+            mpp = synchronized
+            config.mpp = synchronized
+            synchronized.paths.orEmpty()
+                .firstNotNullOfOrNull { MppPathParser.parse(it.endpoint) }
+                ?.let {
+                    config.server = it.host
+                    config.serverPort = it.firstPort.toString()
+                }
+        }
+        val error = MppProfileValidator.validate(mpp)
+        if (error == null &&
+            mpp.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION
+        ) {
+            // Guided patching deliberately retains unknown/non-guided TOML, so it needs the same
+            // full native compile validation as raw mode after specific Kotlin errors are handled.
+            runCatching { MptunnelNative.validateEditor(mpp) }.getOrElse {
+                toast(R.string.server_mpp_error_raw_toml)
+                return false
+            }
+        }
+        if (error == null) return true
         toast(
             when (error) {
                 MppValidationError.PATH_REQUIRED -> R.string.server_mpp_error_path_required
@@ -171,35 +199,31 @@ class ServerMppActivity : BaseServerActivity() {
             title = stringResource(R.string.server_mpp_use_raw_toml),
             checked = config.useRawToml,
             onCheckedChange = { enabled ->
-                val rawToml = if (enabled && config.rawToml.isBlank()) {
-                    runCatching {
-                        MppConfigRenderer.renderEditableTemplate(state.address, config)
-                    }.getOrDefault("")
+                if (enabled) {
+                    state.mppConfig = config.copy(useRawToml = true)
                 } else {
-                    config.rawToml
+                    runCatching { projectCanonicalEditor(state) }
+                        .onFailure { toast(R.string.server_mpp_error_raw_toml) }
                 }
-                val paths = if (!enabled && config.paths == null) {
-                    config.effectivePaths(state.address)
-                } else {
-                    config.paths
-                }
-                state.mppConfig = config.copy(
-                    paths = paths,
-                    useRawToml = enabled,
-                    rawToml = rawToml,
-                )
-                if (!enabled) state.syncFromPaths(paths.orEmpty())
             },
         )
 
         if (config.useRawToml) {
             ManagedContentField(
                 label = stringResource(R.string.server_mpp_raw_toml),
-                value = config.rawToml,
-                onValueChange = { state.updateMpp { copy(rawToml = it) } },
-                onCopyClick = { copyContent(config.rawToml) },
+                value = config.editorToml,
+                onValueChange = {
+                    state.mppConfig = state.mppConfig.copy(editorToml = it)
+                },
+                onCopyClick = { copyContent(config.editorToml) },
                 onImportClick = {
-                    importTextContent { state.updateMpp { copy(rawToml = it) } }
+                    importBinaryContent { content ->
+                        runCatching { MppMaterialCodec.decodeUtf8(content) }
+                            .onSuccess {
+                                state.mppConfig = state.mppConfig.copy(editorToml = it)
+                            }
+                            .onFailure { toast(R.string.server_mpp_import_failed) }
+                    }
                 },
                 sensitive = false,
                 minLines = 16,
@@ -214,36 +238,69 @@ class ServerMppActivity : BaseServerActivity() {
         HelpText(stringResource(R.string.server_mpp_material_hint))
         ManagedContentField(
             label = stringResource(R.string.server_mpp_credential_secret),
-            value = config.credentialSecret,
-            onValueChange = { state.updateMpp { copy(credentialSecret = it) } },
-            onCopyClick = { copyContent(config.credentialSecret) },
+            value = state.mppCredentialHex,
+            onValueChange = {
+                state.mppCredentialHex = it.lowercase()
+                state.mppCredentialDecodeFailed = false
+            },
+            onCopyClick = { copyContent(state.mppCredentialHex) },
             onImportClick = {
-                importTextContent { state.updateMpp { copy(credentialSecret = it) } }
+                importBinaryContent {
+                    state.mppCredentialHex = MppMaterialCodec.encodeHex(it)
+                    state.mppCredentialDecodeFailed = false
+                }
             },
         )
+        ByteMaterialPasteActions { asText ->
+            pasteByteMaterial(asText) {
+                state.mppCredentialHex = it
+                state.mppCredentialDecodeFailed = false
+            }
+        }
         ManagedContentField(
             label = stringResource(R.string.server_mpp_pinned_certificate),
-            value = config.pinnedCertificatePem,
-            onValueChange = { state.updateMpp { copy(pinnedCertificatePem = it) } },
-            onCopyClick = { copyContent(config.pinnedCertificatePem) },
-            onImportClick = {
-                importTextContent { state.updateMpp { copy(pinnedCertificatePem = it) } }
+            value = state.mppCertificatePem,
+            onValueChange = {
+                state.mppCertificatePem = it
+                state.mppCertificateDecodeFailed = false
             },
+            onCopyClick = { copyContent(state.mppCertificatePem) },
+            onImportClick = {
+                importBinaryContent { content ->
+                    runCatching { MppMaterialCodec.decodeUtf8(content) }
+                        .onSuccess {
+                            state.mppCertificatePem = it
+                            state.mppCertificateDecodeFailed = false
+                        }
+                        .onFailure { toast(R.string.server_mpp_import_failed) }
+                }
+            },
+            sensitive = false,
             minLines = 6,
             maxLines = 12,
             textStyle = TextStyle(fontFamily = FontFamily.Monospace),
         )
         ManagedContentField(
             label = stringResource(R.string.server_mpp_transport_secret),
-            value = config.transportSecret,
-            onValueChange = { state.updateMpp { copy(transportSecret = it) } },
-            onCopyClick = { copyContent(config.transportSecret) },
+            value = state.mppTransportHex,
+            onValueChange = {
+                state.mppTransportHex = it.lowercase()
+                state.mppTransportDecodeFailed = false
+            },
+            onCopyClick = { copyContent(state.mppTransportHex) },
             onImportClick = {
                 importBinaryContent {
-                    state.updateMpp { copy(transportSecret = MppMaterialCodec.encodeImportedBinary(it)) }
+                    state.mppTransportHex = MppMaterialCodec.encodeHex(it)
+                    state.mppTransportDecodeFailed = false
                 }
             },
         )
+        ByteMaterialPasteActions { asText ->
+            pasteByteMaterial(asText) {
+                state.mppTransportHex = it
+                state.mppTransportDecodeFailed = false
+            }
+        }
         HelpText(stringResource(R.string.server_mpp_transport_secret_hint))
     }
 
@@ -304,7 +361,7 @@ class ServerMppActivity : BaseServerActivity() {
             }
             OutlinedButton(
                 onClick = {
-                    state.setStructuredPaths(paths + newPath(paths, state, "udp"))
+                    state.setStructuredPaths(paths + newPath(paths, state, "quic"))
                 },
                 modifier = Modifier.weight(1f),
             ) {
@@ -322,6 +379,7 @@ class ServerMppActivity : BaseServerActivity() {
                     copy(advanced = update(advanced ?: MppAdvancedConfig()))
                 }
             },
+            onDraftValidityChange = { invalid -> state.mppGuidedDraftInvalid = invalid },
         )
         FormTextField(
             label = stringResource(R.string.server_mpp_credential_id),
@@ -344,6 +402,7 @@ class ServerMppActivity : BaseServerActivity() {
     private fun RuntimeTuningSection(
         advanced: MppAdvancedConfig?,
         onAdvancedUpdate: ((MppAdvancedConfig) -> MppAdvancedConfig) -> Unit,
+        onDraftValidityChange: (Boolean) -> Unit,
     ) {
         var expanded by rememberSaveable { mutableStateOf(false) }
         val resolved = advanced ?: MppAdvancedConfig()
@@ -377,6 +436,27 @@ class ServerMppActivity : BaseServerActivity() {
         }
         var quicIdleTimeout by rememberSaveable {
             mutableStateOf(resolved.quicIdleTimeoutMs.toString())
+        }
+
+        fun currentTextDraft() = MppAdvancedTextDraft(
+            pathProbeIntervalMs = probeInterval,
+            pathProbeTimeoutMs = probeTimeout,
+            extraTrafficHintPercent = extraTraffic,
+            authFreshnessWindowSeconds = authFreshness,
+            sessionRetentionTimeoutMs = sessionRetention,
+            tcpHeartbeatIntervalMs = tcpHeartbeatInterval,
+            tcpHeartbeatTimeoutMs = tcpHeartbeatTimeout,
+            quicKeepAliveIntervalMs = quicKeepAlive,
+            quicIdleTimeoutMs = quicIdleTimeout,
+        )
+
+        fun publishDraftValidity() {
+            onDraftValidityChange(!currentTextDraft().isValid())
+        }
+
+        val textDraft = currentTextDraft()
+        LaunchedEffect(textDraft) {
+            onDraftValidityChange(!textDraft.isValid())
         }
 
         OutlinedCard(
@@ -426,6 +506,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = probeInterval,
                         onValueChange = { value ->
                             probeInterval = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(pathProbeIntervalMs = parsed) }
                             }
@@ -439,6 +520,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = probeTimeout,
                         onValueChange = { value ->
                             probeTimeout = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(pathProbeTimeoutMs = parsed) }
                             }
@@ -456,6 +538,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = extraTraffic,
                         onValueChange = { value ->
                             extraTraffic = value
+                            publishDraftValidity()
                             value.toIntOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(extraTrafficHintPercent = parsed) }
                             }
@@ -471,6 +554,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = authFreshness,
                         onValueChange = { value ->
                             authFreshness = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(authFreshnessWindowSeconds = parsed) }
                             }
@@ -488,6 +572,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = sessionRetention,
                         onValueChange = { value ->
                             sessionRetention = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(sessionRetentionTimeoutMs = parsed) }
                             }
@@ -505,6 +590,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = tcpHeartbeatInterval,
                         onValueChange = { value ->
                             tcpHeartbeatInterval = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(tcpHeartbeatIntervalMs = parsed) }
                             }
@@ -518,6 +604,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = tcpHeartbeatTimeout,
                         onValueChange = { value ->
                             tcpHeartbeatTimeout = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(tcpHeartbeatTimeoutMs = parsed) }
                             }
@@ -540,6 +627,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = quicKeepAlive,
                         onValueChange = { value ->
                             quicKeepAlive = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(quicKeepAliveIntervalMs = parsed) }
                             }
@@ -553,6 +641,7 @@ class ServerMppActivity : BaseServerActivity() {
                         value = quicIdleTimeout,
                         onValueChange = { value ->
                             quicIdleTimeout = value
+                            publishDraftValidity()
                             value.toLongOrNull()?.let { parsed ->
                                 onAdvancedUpdate { it.copy(quicIdleTimeoutMs = parsed) }
                             }
@@ -623,7 +712,7 @@ class ServerMppActivity : BaseServerActivity() {
                                 when (endpoint?.underlay) {
                                     MppPathUnderlay.TCP ->
                                         R.string.server_mpp_path_type_tcp
-                                    MppPathUnderlay.UDP ->
+                                    MppPathUnderlay.QUIC ->
                                         R.string.server_mpp_path_type_quic
                                     null -> R.string.server_mpp_path_type_invalid
                                 }
@@ -702,7 +791,7 @@ class ServerMppActivity : BaseServerActivity() {
                                     stringResource(R.string.server_mpp_transport_tcp),
                                 ),
                                 SelectOption(
-                                    MppPathUnderlay.UDP,
+                                    MppPathUnderlay.QUIC,
                                     stringResource(R.string.server_mpp_transport_quic),
                                 ),
                             ),
@@ -753,13 +842,13 @@ class ServerMppActivity : BaseServerActivity() {
                         if (endpoint.underlay == MppPathUnderlay.TCP) {
                             CompactTextField(
                                 label = stringResource(R.string.server_mpp_tcp_carrier_max),
-                                value = endpoint.tcpCarrierMaxText,
+                                value = endpoint.maxTcpCarriersText,
                                 onValueChange = { count ->
                                     applyGuidedEndpoint(
                                         MppEndpointUriEditor.withScalarOption(
                                             path.endpoint,
-                                            "tcp-carriers",
-                                            "1-$count",
+                                            "max-tcp-carriers",
+                                            count,
                                             allowDraftSource = guidedDraft,
                                         )
                                     )
@@ -871,15 +960,15 @@ class ServerMppActivity : BaseServerActivity() {
 
         CompactFieldRow {
             CompactTextField(
-                label = stringResource(R.string.server_mpp_source_ip),
-                value = endpoint.optionValue("source-ip"),
-                onValueChange = { setScalar("source-ip", it) },
+                label = stringResource(R.string.server_mpp_source_address),
+                value = endpoint.optionValue("source-address"),
+                onValueChange = { setScalar("source-address", it) },
                 modifier = Modifier.weight(1.2f),
             )
             CompactTextField(
-                label = stringResource(R.string.server_mpp_port_hop_interval),
-                value = endpoint.optionValue("port-hop-interval-ms"),
-                onValueChange = { setScalar("port-hop-interval-ms", it) },
+                label = stringResource(R.string.server_mpp_port_rotation_interval),
+                value = endpoint.optionValue("port-rotation-interval-ms"),
+                onValueChange = { setScalar("port-rotation-interval-ms", it) },
                 enabled = '-' in endpoint.ports,
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
@@ -888,25 +977,29 @@ class ServerMppActivity : BaseServerActivity() {
         CompactFieldRow {
             CompactTextField(
                 label = stringResource(R.string.server_mpp_srtt),
-                value = endpoint.optionValue("srtt-ms"),
-                onValueChange = { setScalar("srtt-ms", it) },
+                value = endpoint.optionValue("initial-srtt-ms"),
+                onValueChange = { setScalar("initial-srtt-ms", it) },
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
             )
             CompactTextField(
-                label = stringResource(R.string.server_mpp_jitter),
-                value = endpoint.optionValue("jitter-ms"),
-                onValueChange = { setScalar("jitter-ms", it) },
+                label = stringResource(R.string.server_mpp_rttvar),
+                value = endpoint.optionValue("initial-rttvar-ms"),
+                onValueChange = { setScalar("initial-rttvar-ms", it) },
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
             )
-            CompactTextField(
-                label = stringResource(R.string.server_mpp_datagram_limit),
-                value = endpoint.optionValue("datagram-payload-limit"),
-                onValueChange = { setScalar("datagram-payload-limit", it) },
-                keyboardType = KeyboardType.Number,
-                modifier = Modifier.weight(1.15f),
-            )
+            if (endpoint.underlay == MppPathUnderlay.QUIC) {
+                CompactTextField(
+                    label = stringResource(R.string.server_mpp_max_datagram_payload),
+                    value = endpoint.optionValue("max-datagram-payload-bytes"),
+                    onValueChange = { setScalar("max-datagram-payload-bytes", it) },
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1.15f),
+                )
+            } else {
+                Spacer(Modifier.weight(1.15f))
+            }
         }
 
         val rateMode = endpoint.rateMode
@@ -921,8 +1014,8 @@ class ServerMppActivity : BaseServerActivity() {
                     val existingNumeric = endpoint.rateValue.takeIf { rateMode.isNumeric }
                     val (key, value) = when (mode) {
                         MppRateMode.DEFAULT -> null to null
-                        MppRateMode.UNKNOWN -> "rate" to "unknown"
-                        MppRateMode.UNLIMITED -> "rate" to "unlimited"
+                        MppRateMode.UNKNOWN -> "initial-rate" to "unknown"
+                        MppRateMode.UNLIMITED -> "initial-rate" to "unlimited"
                         else -> mode.optionKey to (existingNumeric ?: "1")
                     }
                     onEndpointChange(
@@ -959,12 +1052,12 @@ class ServerMppActivity : BaseServerActivity() {
         }
         CompactFieldRow(verticalPadding = 0.dp) {
             CompactSwitch(
-                title = stringResource(R.string.server_mpp_bulk_allowed),
-                checked = endpoint.booleanOption("bulk-allowed"),
+                title = stringResource(R.string.server_mpp_allow_bulk),
+                checked = endpoint.booleanOption("allow-bulk"),
                 onCheckedChange = { enabled ->
                     MppEndpointUriEditor.withBooleanOption(
                         endpointUri,
-                        "bulk-allowed",
+                        "allow-bulk",
                         enabled,
                         allowDraftSource = allowDraftSource,
                     ).let(onEndpointChange)
@@ -972,12 +1065,12 @@ class ServerMppActivity : BaseServerActivity() {
                 modifier = Modifier.weight(1f),
             )
             CompactSwitch(
-                title = stringResource(R.string.server_mpp_probe_only),
-                checked = endpoint.booleanOption("probe-only"),
+                title = stringResource(R.string.server_mpp_control_only),
+                checked = endpoint.booleanOption("control-only"),
                 onCheckedChange = { enabled ->
                     MppEndpointUriEditor.withBooleanOption(
                         endpointUri,
-                        "probe-only",
+                        "control-only",
                         enabled,
                         allowDraftSource = allowDraftSource,
                     ).let(onEndpointChange)
@@ -986,12 +1079,12 @@ class ServerMppActivity : BaseServerActivity() {
             )
             if (endpoint.underlay == MppPathUnderlay.TCP) {
                 CompactSwitch(
-                    title = stringResource(R.string.server_mpp_no_udp),
-                    checked = endpoint.booleanOption("no-udp"),
+                    title = stringResource(R.string.server_mpp_allow_datagrams),
+                    checked = endpoint.booleanOption("allow-datagrams"),
                     onCheckedChange = { enabled ->
                         MppEndpointUriEditor.withBooleanOption(
                             endpointUri,
-                            "no-udp",
+                            "allow-datagrams",
                             enabled,
                             allowDraftSource = allowDraftSource,
                         ).let(onEndpointChange)
@@ -1129,11 +1222,11 @@ class ServerMppActivity : BaseServerActivity() {
         val optionKey: String? = null,
     ) {
         DEFAULT(R.string.server_mpp_rate_default),
-        UNKNOWN(R.string.server_mpp_rate_unknown, "rate"),
-        UNLIMITED(R.string.server_mpp_rate_unlimited, "rate"),
-        BPS(R.string.server_mpp_rate_bps, "rate-bps"),
-        KBPS(R.string.server_mpp_rate_kbps, "rate-kbps"),
-        MBPS(R.string.server_mpp_rate_mbps, "rate-mbps"),
+        UNKNOWN(R.string.server_mpp_rate_unknown, "initial-rate"),
+        UNLIMITED(R.string.server_mpp_rate_unlimited, "initial-rate"),
+        BPS(R.string.server_mpp_rate_bps, "initial-rate-bps"),
+        KBPS(R.string.server_mpp_rate_kbps, "initial-rate-kbps"),
+        MBPS(R.string.server_mpp_rate_mbps, "initial-rate-mbps"),
         ;
 
         val isNumeric: Boolean
@@ -1144,14 +1237,14 @@ class ServerMppActivity : BaseServerActivity() {
         options.lastOrNull { it.key == key }?.value.orEmpty()
 
     private fun MppEditableEndpoint.booleanOption(key: String): Boolean =
-        options.lastOrNull { it.key == key }?.let { it.value == null || it.value == "true" }
-            ?: false
+        options.lastOrNull { it.key == key }?.value == "true" ||
+                (options.none { it.key == key } && key in BOOLEAN_DEFAULT_TRUE_KEYS)
 
-    private val MppEditableEndpoint.tcpCarrierMaxText: String
+    private val MppEditableEndpoint.maxTcpCarriersText: String
         get() {
-            val value = options.lastOrNull { it.key == "tcp-carriers" }?.value
+            val value = options.lastOrNull { it.key == "max-tcp-carriers" }?.value
                 ?: return MppProfileConfig.DEFAULT_TCP_CARRIER_COUNT.toString()
-            return value.substringAfterLast('-')
+            return value
         }
 
     private val MppEditableEndpoint.rateMode: MppRateMode
@@ -1159,10 +1252,10 @@ class ServerMppActivity : BaseServerActivity() {
             val option = options.firstOrNull { it.key in RATE_OPTION_KEYS }
                 ?: return MppRateMode.DEFAULT
             return when (option.key) {
-                "rate-bps" -> MppRateMode.BPS
-                "rate-kbps" -> MppRateMode.KBPS
-                "rate-mbps" -> MppRateMode.MBPS
-                "rate" -> if (option.value == "unlimited") {
+                "initial-rate-bps" -> MppRateMode.BPS
+                "initial-rate-kbps" -> MppRateMode.KBPS
+                "initial-rate-mbps" -> MppRateMode.MBPS
+                "initial-rate" -> if (option.value == "unlimited") {
                     MppRateMode.UNLIMITED
                 } else {
                     MppRateMode.UNKNOWN
@@ -1184,19 +1277,85 @@ class ServerMppActivity : BaseServerActivity() {
         )
     }
 
-    private fun ServerUiState.updateMpp(update: MppProfileConfig.() -> MppProfileConfig) {
-        mppConfig = mppConfig.update()
-        val paths = mppConfig.paths
-        if (paths == null) {
-            port = mppConfig.primaryPort().toString()
-        } else {
-            syncFromPaths(paths)
+    @Composable
+    private fun ByteMaterialPasteActions(onPaste: (asUtf8Text: Boolean) -> Unit) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = { onPaste(false) }) {
+                Text(stringResource(R.string.server_mpp_paste_as_hex))
+            }
+            TextButton(onClick = { onPaste(true) }) {
+                Text(stringResource(R.string.server_mpp_paste_as_text))
+            }
         }
     }
 
+    private fun initializeCanonicalEditor(state: ServerUiState) {
+        val original = state.mppConfig
+        if (original.editorSchemaVersion != MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+            original.useRawToml && original.rawToml.isNotBlank()
+        ) {
+            state.mppConfig = original.copy(
+                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                editorToml = MptunnelNative.migrateEditor(original.rawToml),
+                rawToml = "",
+            )
+            return
+        }
+        if (original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+            original.useRawToml && original.editorToml.isNotBlank()
+        ) {
+            // Raw mode owns this already-canonical document. Projection is deferred until the
+            // user explicitly switches to guided mode so opening it cannot normalize unknowns.
+            return
+        }
+        var projectedConfig = original
+        val existingDocument = when {
+            original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+                    original.editorToml.isNotBlank() -> original.editorToml
+            original.useRawToml && original.rawToml.isNotBlank() -> original.rawToml
+            else -> {
+                val seedHost = state.address.ifBlank { DEFAULT_NEW_PROFILE_HOST }
+                val paths = original.effectivePaths(seedHost)
+                projectedConfig = original.copy(paths = paths)
+                MppConfigRenderer.renderEditableTemplate(seedHost, projectedConfig)
+            }
+        }
+        val projection = MptunnelNative.projectEditor(existingDocument)
+        val patched = MptunnelNative.patchEditor(existingDocument, projection)
+        state.mppConfig = projection.applyTo(projectedConfig, patched).copy(
+            useRawToml = original.useRawToml,
+            rawToml = "",
+        )
+        state.syncFromPaths(projection.paths)
+    }
+
+    private fun projectCanonicalEditor(state: ServerUiState) {
+        val config = state.mppConfig
+        val projection = MptunnelNative.projectEditor(config.editorToml)
+        val patched = MptunnelNative.patchEditor(config.editorToml, projection)
+        state.mppConfig = projection.applyTo(config, patched).copy(useRawToml = false)
+        state.syncFromPaths(projection.paths)
+    }
+
+    private fun ServerUiState.updateMpp(update: MppProfileConfig.() -> MppProfileConfig) {
+        val updated = mppConfig.update()
+        val projection = MppEditorProjection.from(updated, address)
+        runCatching {
+            val document = MptunnelNative.patchEditor(updated.editorToml, projection)
+            mppConfig = projection.applyTo(updated, document).copy(
+                useRawToml = updated.useRawToml,
+            )
+            syncFromPaths(projection.paths)
+        }.onFailure { toast(R.string.server_mpp_error_raw_toml) }
+    }
+
     private fun ServerUiState.setStructuredPaths(paths: List<MppPathConfig>) {
-        mppConfig = mppConfig.copy(paths = paths)
-        syncFromPaths(paths)
+        updateMpp { copy(paths = paths) }
     }
 
     /** Keep legacy ProfileItem summary fields valid without making them editable authorities. */
@@ -1213,8 +1372,18 @@ class ServerMppActivity : BaseServerActivity() {
         toastSuccess(R.string.toast_content_copied)
     }
 
-    private fun importTextContent(onImported: (String) -> Unit) {
-        importBinaryContent { onImported(it.toString(Charsets.UTF_8)) }
+    private fun pasteByteMaterial(asUtf8Text: Boolean, onDecodedHex: (String) -> Unit) {
+        val pasted = Utils.getClipboard(this)
+        if (pasted.isEmpty()) return
+        runCatching {
+            val bytes = if (asUtf8Text) {
+                MppMaterialCodec.encodeUtf8(pasted)
+            } else {
+                MppMaterialCodec.decodeHex(pasted)
+            }
+            MppMaterialCodec.encodeHex(bytes)
+        }.onSuccess(onDecodedHex)
+            .onFailure { toast(R.string.server_mpp_import_failed) }
     }
 
     private fun importBinaryContent(onImported: (ByteArray) -> Unit) {
@@ -1241,8 +1410,18 @@ class ServerMppActivity : BaseServerActivity() {
     companion object {
         private const val MAX_IMPORTED_CONTENT_BYTES = 1024 * 1024
         private const val DEFAULT_NEW_PROFILE_HOST = "server.example.com"
-        private val RATE_OPTION_KEYS = setOf("rate", "rate-bps", "rate-kbps", "rate-mbps")
-        private val NUMERIC_RATE_OPTION_KEYS = setOf("rate-bps", "rate-kbps", "rate-mbps")
+        private val RATE_OPTION_KEYS = setOf(
+            "initial-rate",
+            "initial-rate-bps",
+            "initial-rate-kbps",
+            "initial-rate-mbps",
+        )
+        private val NUMERIC_RATE_OPTION_KEYS = setOf(
+            "initial-rate-bps",
+            "initial-rate-kbps",
+            "initial-rate-mbps",
+        )
+        private val BOOLEAN_DEFAULT_TRUE_KEYS = setOf("allow-bulk", "allow-datagrams")
 
         private fun newPath(
             paths: List<MppPathConfig>,
@@ -1254,9 +1433,9 @@ class ServerMppActivity : BaseServerActivity() {
             val endpointHost = if (':' in host) "[$host]" else host
             val port = identity?.firstPort ?: state.port.toIntOrNull()?.takeIf { it in 1..65535 }
                 ?: MppProfileConfig.DEFAULT_SERVER_PORT
-            val baseName = if (scheme == "tcp") "path-tcp" else "path-udp"
+            val baseName = if (scheme == "tcp") "path-tcp" else "path-quic"
             val options = if (scheme == "tcp") {
-                "?tcp-carriers=1-${MppProfileConfig.DEFAULT_TCP_CARRIER_COUNT}"
+                "?max-tcp-carriers=${MppProfileConfig.DEFAULT_TCP_CARRIER_COUNT}"
             } else {
                 ""
             }

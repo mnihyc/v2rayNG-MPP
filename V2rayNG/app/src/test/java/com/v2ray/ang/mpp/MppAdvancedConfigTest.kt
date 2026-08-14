@@ -12,16 +12,18 @@ import org.junit.Test
 class MppAdvancedConfigTest {
 
     @Test
-    fun profileWithoutAdvancedObjectRetainsLegacyRendererShape() {
+    fun profileWithoutAdvancedObjectLeavesEveryNativeDefaultUnpinned() {
         val config = validConfig()
 
         val template = MppConfigRenderer.renderEditableTemplate("edge.example", config)
 
-        assertTrue(template.contains("[session]\nretention_timeout_ms = 300000"))
+        assertFalse(template.contains("[session]"))
+        assertFalse(template.contains("retention_timeout_ms"))
         assertFalse(template.contains("[resources]"))
         assertFalse(template.contains("path_probe_interval_ms"))
         assertFalse(template.contains("[outbounds.performance]"))
         assertFalse(template.contains("auth_freshness_window_seconds"))
+        assertNull(MppEditorProjection.from(config, "edge.example").advanced)
         assertNull(MppProfileValidator.validate(config))
     }
 
@@ -197,9 +199,16 @@ class MppAdvancedConfigTest {
         assertNull(
             MppProfileValidator.validate(
                 base.copy(
+                    editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                    editorToml = template,
                     advanced = staleInvalidStructuredTuning,
                     useRawToml = true,
-                    rawToml = template,
+                    credentialSecret = MppMaterialCodec.encodeStored(
+                        MppMaterialCodec.encodeUtf8(base.credentialSecret)
+                    ),
+                    pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                        MppMaterialCodec.encodeUtf8(base.pinnedCertificatePem)
+                    ),
                 )
             )
         )

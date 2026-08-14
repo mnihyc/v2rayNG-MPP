@@ -15,6 +15,7 @@ import com.v2ray.ang.enums.NetworkType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.mpp.MppParsedPath
 import com.v2ray.ang.mpp.MppPathParser
+import com.v2ray.ang.mpp.MppMaterialCodec
 import com.v2ray.ang.util.JsonUtil
 
 class ServerUiState(
@@ -66,6 +67,13 @@ class ServerUiState(
     pinnedCA256: String = "",
     isFetchingCert: Boolean = false,
     mppConfig: MppProfileConfig = MppProfileConfig(),
+    mppCredentialHex: String = "",
+    mppCertificatePem: String = "",
+    mppTransportHex: String = "",
+    mppCredentialDecodeFailed: Boolean = false,
+    mppCertificateDecodeFailed: Boolean = false,
+    mppTransportDecodeFailed: Boolean = false,
+    mppGuidedDraftInvalid: Boolean = false,
 ) {
     var configType by mutableStateOf(configType)
     var remarks by mutableStateOf(remarks)
@@ -115,6 +123,13 @@ class ServerUiState(
     var pinnedCA256 by mutableStateOf(pinnedCA256)
     var isFetchingCert by mutableStateOf(isFetchingCert)
     var mppConfig by mutableStateOf(mppConfig)
+    var mppCredentialHex by mutableStateOf(mppCredentialHex)
+    var mppCertificatePem by mutableStateOf(mppCertificatePem)
+    var mppTransportHex by mutableStateOf(mppTransportHex)
+    var mppCredentialDecodeFailed by mutableStateOf(mppCredentialDecodeFailed)
+    var mppCertificateDecodeFailed by mutableStateOf(mppCertificateDecodeFailed)
+    var mppTransportDecodeFailed by mutableStateOf(mppTransportDecodeFailed)
+    var mppGuidedDraftInvalid by mutableStateOf(mppGuidedDraftInvalid)
 
     fun toProfileItem(initialConfig: ProfileItem): ProfileItem {
         val isVmess = configType == EConfigType.VMESS
@@ -192,7 +207,34 @@ class ServerUiState(
             echConfigList = echConfigList,
             verifyPeerCertByName = verifyPeerCertByName,
             pinnedCA256 = pinnedCA256,
-            mpp = if (isMpp) mppConfig else null,
+            mpp = if (isMpp) canonicalMppConfig() else null,
+        )
+    }
+
+    private fun canonicalMppConfig(): MppProfileConfig {
+        val credential = runCatching { MppMaterialCodec.decodeHex(mppCredentialHex) }.getOrNull()
+        val transport = runCatching { MppMaterialCodec.decodeHex(mppTransportHex) }.getOrNull()
+        return mppConfig.copy(
+            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            credentialSecret = if (mppCredentialDecodeFailed) {
+                mppConfig.credentialSecret
+            } else {
+                credential?.let(MppMaterialCodec::encodeStored).orEmpty()
+            },
+            pinnedCertificatePem = if (mppCertificateDecodeFailed) {
+                mppConfig.pinnedCertificatePem
+            } else {
+                MppMaterialCodec.encodeStored(MppMaterialCodec.encodeUtf8(mppCertificatePem))
+            },
+            transportSecret = when {
+                mppTransportDecodeFailed -> mppConfig.transportSecret
+                mppTransportHex.isBlank() -> ""
+                transport != null -> MppMaterialCodec.encodeStored(transport)
+                // Preserve an invalid, non-empty draft as an invalid canonical value. Treating it
+                // as an absent optional secret would silently discard a user's malformed edit.
+                else -> INVALID_CANONICAL_MATERIAL
+            },
+            rawToml = "",
         )
     }
 
@@ -207,6 +249,10 @@ class ServerUiState(
             } else {
                 null
             }
+            val resolvedMpp = mpp ?: MppProfileConfig(
+                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            )
+            val materialDraft = decodeMppMaterialDraft(resolvedMpp)
             return ServerUiState(
                 configType = initialConfig.configType,
                 remarks = initialConfig.remarks,
@@ -262,7 +308,13 @@ class ServerUiState(
                 echConfigList = initialConfig.echConfigList ?: "",
                 verifyPeerCertByName = initialConfig.verifyPeerCertByName ?: "",
                 pinnedCA256 = initialConfig.pinnedCA256 ?: "",
-                mppConfig = mpp ?: MppProfileConfig(),
+                mppConfig = resolvedMpp,
+                mppCredentialHex = materialDraft.credentialHex,
+                mppCertificatePem = materialDraft.certificatePem,
+                mppTransportHex = materialDraft.transportHex,
+                mppCredentialDecodeFailed = materialDraft.credentialFailed,
+                mppCertificateDecodeFailed = materialDraft.certificateFailed,
+                mppTransportDecodeFailed = materialDraft.transportFailed,
             )
         }
 
@@ -271,7 +323,18 @@ class ServerUiState(
         ): ServerUiState = fromProfileItem(initialConfig)
 
         val Saver: Saver<ServerUiState, String> = Saver(
-            save = { JsonUtil.toJson(it.toProfileItem(ProfileItem.create(it.configType))) },
+            save = { state ->
+                val profile = state.toProfileItem(ProfileItem.create(state.configType))
+                val mpp = state.mppConfig
+                if (mpp.editorSchemaVersion != MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+                    mpp.useRawToml && mpp.rawToml.isNotBlank()
+                ) {
+                    // Native migration is the only operation allowed to replace legacy raw
+                    // authority. A lifecycle save can run before that migration completes.
+                    profile.mpp = mpp
+                }
+                JsonUtil.toJson(profile)
+            },
             restore = { saved ->
                 JsonUtil.fromJsonSafe(saved, ProfileItem::class.java)?.let {
                     fromProfileItem(it)
@@ -284,5 +347,55 @@ class ServerUiState(
                 ?.asSequence()
                 ?.mapNotNull { path -> MppPathParser.parse(path.endpoint) }
                 ?.firstOrNull()
+
+        private fun decodeMppMaterialDraft(config: MppProfileConfig): MaterialDraft {
+            fun bytes(value: String, legacyBinaryPrefix: Boolean = false): DecodedMaterial =
+                runCatching {
+                    if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+                        MppMaterialCodec.decodeStored(value)
+                    } else {
+                        MppMaterialCodec.decodeLegacy(value, legacyBinaryPrefix)
+                    }
+                }.fold(
+                    onSuccess = { DecodedMaterial(it, failed = false) },
+                    onFailure = { DecodedMaterial(byteArrayOf(), failed = true) },
+                )
+
+            val credential = bytes(config.credentialSecret)
+            val certificate = bytes(config.pinnedCertificatePem)
+            val transport = config.transportSecret.takeIf(String::isNotBlank)
+                ?.let { bytes(it, legacyBinaryPrefix = true) }
+                ?: DecodedMaterial(byteArrayOf(), failed = false)
+            var certificateFailed = certificate.failed
+            val certificatePem = runCatching { MppMaterialCodec.decodeUtf8(certificate.bytes) }
+                .getOrElse {
+                    certificateFailed = true
+                    ""
+                }
+            return MaterialDraft(
+                credentialHex = MppMaterialCodec.encodeHex(credential.bytes),
+                certificatePem = certificatePem,
+                transportHex = MppMaterialCodec.encodeHex(transport.bytes),
+                credentialFailed = credential.failed,
+                certificateFailed = certificateFailed,
+                transportFailed = transport.failed,
+            )
+        }
+
+        private data class DecodedMaterial(
+            val bytes: ByteArray,
+            val failed: Boolean,
+        )
+
+        private data class MaterialDraft(
+            val credentialHex: String,
+            val certificatePem: String,
+            val transportHex: String,
+            val credentialFailed: Boolean,
+            val certificateFailed: Boolean,
+            val transportFailed: Boolean,
+        )
+
+        private const val INVALID_CANONICAL_MATERIAL = "!"
     }
 }

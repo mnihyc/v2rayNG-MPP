@@ -27,25 +27,20 @@ internal data class MppEditableEndpoint(
  * without this helper silently reverting the user's edit.
  */
 internal object MppEndpointUriEditor {
-    private val RATE_OPTION_KEYS = setOf("rate", "rate-bps", "rate-kbps", "rate-mbps")
-    private val UDP_INCOMPATIBLE_KEYS = setOf("tcp-carriers", "no-udp")
-    private val KNOWN_OPTION_KEYS = setOf(
-        "source-ip",
-        "srtt-ms",
-        "jitter-ms",
-        "rate",
-        "rate-bps",
-        "rate-kbps",
-        "rate-mbps",
-        "datagram-payload-limit",
-        "tcp-carriers",
-        "port-hop-interval-ms",
+    private val RATE_OPTION_KEYS = setOf(
+        "initial-rate",
+        "initial-rate-bps",
+        "initial-rate-kbps",
+        "initial-rate-mbps",
+    )
+    private val BOOLEAN_OPTION_KEYS = setOf(
         "backup",
         "expensive",
-        "bulk-allowed",
-        "probe-only",
-        "no-udp",
+        "allow-bulk",
+        "control-only",
+        "allow-datagrams",
     )
+    private val KNOWN_OPTION_KEYS = MppPathParser.QUERY_KEYS
 
     fun parse(uri: String): MppEditableEndpoint? {
         val parsed = MppPathParser.parse(uri) ?: return null
@@ -71,12 +66,12 @@ internal object MppEndpointUriEditor {
         if (schemeEnd < 0) return null
         val underlay = when (uri.substring(0, schemeEnd)) {
             "tcp" -> MppPathUnderlay.TCP
-            "udp" -> MppPathUnderlay.UDP
+            "quic" -> MppPathUnderlay.QUIC
             else -> return null
         }
         val path = uri.substring(schemeEnd + 3)
         val queryStart = path.indexOf('?')
-        val authority = (if (queryStart >= 0) path.substring(0, queryStart) else path).trim()
+        val authority = if (queryStart >= 0) path.substring(0, queryStart) else path
         val query = if (queryStart >= 0) path.substring(queryStart + 1) else null
 
         val host: String
@@ -122,7 +117,7 @@ internal object MppEndpointUriEditor {
     fun render(endpoint: MppEditableEndpoint): String {
         val scheme = when (endpoint.underlay) {
             MppPathUnderlay.TCP -> "tcp"
-            MppPathUnderlay.UDP -> "udp"
+            MppPathUnderlay.QUIC -> "quic"
         }
         val authorityHost = when {
             endpoint.host.startsWith('[') && endpoint.host.endsWith(']') -> endpoint.host
@@ -143,11 +138,11 @@ internal object MppEndpointUriEditor {
     ): String? {
         val endpoint = parseSource(uri, allowDraftSource) ?: return null
         if (endpoint.underlay == underlay) return uri
-        val options = if (underlay == MppPathUnderlay.UDP) {
-            endpoint.options.filterNot { it.key in UDP_INCOMPATIBLE_KEYS }
-        } else {
-            endpoint.options
+        val incompatibleKeys = when (underlay) {
+            MppPathUnderlay.TCP -> setOf("max-datagram-payload-bytes")
+            MppPathUnderlay.QUIC -> setOf("max-tcp-carriers", "allow-datagrams")
         }
+        val options = endpoint.options.filterNot { it.key in incompatibleKeys }
         return render(endpoint.copy(underlay = underlay, options = options))
     }
 
@@ -169,7 +164,11 @@ internal object MppEndpointUriEditor {
         valueOrNull: String?,
         allowDraftSource: Boolean = false,
     ): String? {
+        require(key in KNOWN_OPTION_KEYS && key !in RATE_OPTION_KEYS && key !in BOOLEAN_OPTION_KEYS) {
+            "Unsupported scalar option: $key"
+        }
         val endpoint = parseSource(uri, allowDraftSource) ?: return null
+        if (valueOrNull != null && !scalarOptionApplies(endpoint, key)) return null
         val replacement = valueOrNull?.let { MppEditableEndpointOption(key, it) }
         return rewriteOptions(uri, endpoint, setOf(key), replacement)
     }
@@ -180,8 +179,10 @@ internal object MppEndpointUriEditor {
         enabled: Boolean,
         allowDraftSource: Boolean = false,
     ): String? {
+        require(key in BOOLEAN_OPTION_KEYS) { "Unsupported Boolean option: $key" }
         val endpoint = parseSource(uri, allowDraftSource) ?: return null
-        val replacement = if (enabled) MppEditableEndpointOption(key, null) else null
+        if (key == "allow-datagrams" && endpoint.underlay != MppPathUnderlay.TCP) return null
+        val replacement = MppEditableEndpointOption(key, enabled.toString())
         return rewriteOptions(uri, endpoint, setOf(key), replacement)
     }
 
@@ -205,6 +206,14 @@ internal object MppEndpointUriEditor {
 
     private fun parseSource(uri: String, allowDraftSource: Boolean): MppEditableEndpoint? =
         parse(uri) ?: if (allowDraftSource) parseDraft(uri) else null
+
+    private fun scalarOptionApplies(endpoint: MppEditableEndpoint, key: String): Boolean =
+        when (key) {
+            "max-datagram-payload-bytes" -> endpoint.underlay == MppPathUnderlay.QUIC
+            "max-tcp-carriers" -> endpoint.underlay == MppPathUnderlay.TCP
+            "port-rotation-interval-ms" -> '-' in endpoint.ports
+            else -> true
+        }
 
     /** Replace a logical option/group at its first position, dropping any later group members. */
     private fun rewriteOptions(

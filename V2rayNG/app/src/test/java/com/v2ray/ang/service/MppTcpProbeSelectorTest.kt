@@ -14,7 +14,7 @@ class MppTcpProbeSelectorTest {
         val profile = profile(
             MppProfileConfig(
                 paths = listOf(
-                    MppPathConfig("quic", "udp://quic.example:7443"),
+                    MppPathConfig("quic", "quic://quic.example:7443"),
                     MppPathConfig("tcp-range", "tcp://range.example:7000-7099"),
                     MppPathConfig("tcp-fixed", "tcp://fixed.example:8443?backup=true"),
                     MppPathConfig("tcp-later", "tcp://later.example:9443"),
@@ -34,7 +34,7 @@ class MppTcpProbeSelectorTest {
             MppProfileConfig(
                 paths = listOf(
                     MppPathConfig("tcp-range", "tcp://range.example:7000-7099"),
-                    MppPathConfig("quic", "udp://quic.example:7443"),
+                    MppPathConfig("quic", "quic://quic.example:7443"),
                 )
             )
         )

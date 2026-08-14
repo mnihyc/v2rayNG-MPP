@@ -31,20 +31,34 @@ object MppProfileValidator {
     private val policyId = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
     fun validate(config: MppProfileConfig): MppValidationError? {
-        if (config.useRawToml) return validateRaw(config)
+        if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+            if (config.editorToml.isBlank()) return MppValidationError.RAW_TOML
+            if (config.useRawToml) return validateCanonicalMaterials(config)
+        } else if (config.useRawToml) {
+            return validateLegacyRaw(config)
+        }
         validatePaths(config)?.let { return it }
         if (!isValidAdvancedTuning(config.advanced)) {
             return MppValidationError.ADVANCED_TUNING
         }
         if (!policyId.matches(config.credentialId)) return MppValidationError.CREDENTIAL_ID
         if (!policyId.matches(config.principalId)) return MppValidationError.PRINCIPAL_ID
-        if (!isValidCredentialSecret(config.credentialSecret)) {
+        if (!isValidCredentialSecret(config)) {
             return MppValidationError.CREDENTIAL_SECRET
         }
-        if (!isSinglePemCertificate(config.pinnedCertificatePem)) {
+        if (!isSinglePemCertificate(config)) {
             return MppValidationError.CERTIFICATE
         }
-        if (config.transportSecret.isNotBlank() && !isValidTransportSecret(config.transportSecret)) {
+        if (config.transportSecret.isNotBlank() && !isValidTransportSecret(config)) {
+            return MppValidationError.TRANSPORT_SECRET
+        }
+        return null
+    }
+
+    private fun validateCanonicalMaterials(config: MppProfileConfig): MppValidationError? {
+        if (!isValidCredentialSecret(config)) return MppValidationError.CREDENTIAL_SECRET
+        if (!isSinglePemCertificate(config)) return MppValidationError.CERTIFICATE
+        if (config.transportSecret.isNotBlank() && !isValidTransportSecret(config)) {
             return MppValidationError.TRANSPORT_SECRET
         }
         return null
@@ -84,18 +98,16 @@ object MppProfileValidator {
         return null
     }
 
-    private fun validateRaw(config: MppProfileConfig): MppValidationError? {
+    private fun validateLegacyRaw(config: MppProfileConfig): MppValidationError? {
         val raw = config.rawToml
         if (raw.isBlank()) return MppValidationError.RAW_TOML
-        if (raw.tokenCount(MppConfigRenderer.CREDENTIAL_MATERIAL_TOKEN) != 1) {
+        if (raw.tokenCount(LEGACY_CREDENTIAL_TOKEN) != 1) {
             return MppValidationError.RAW_CREDENTIAL_TOKEN
         }
-        if (raw.tokenCount(MppConfigRenderer.CERTIFICATE_MATERIAL_TOKEN) != 1) {
+        if (raw.tokenCount(LEGACY_CERTIFICATE_TOKEN) != 1) {
             return MppValidationError.RAW_CERTIFICATE_TOKEN
         }
-        val transportTokenCount = raw.tokenCount(
-            MppConfigRenderer.TRANSPORT_SECRET_MATERIAL_TOKEN
-        )
+        val transportTokenCount = raw.tokenCount(LEGACY_TRANSPORT_TOKEN)
         if ((config.transportSecret.isNotBlank() && transportTokenCount != 1) ||
             (config.transportSecret.isBlank() && transportTokenCount != 0)
         ) {
@@ -106,17 +118,17 @@ object MppProfileValidator {
         }
         if (raw.tokenCount(MppConfigRenderer.LOCAL_USER_DEFINITION_TOKEN) != 1 ||
             raw.tokenCount(MppConfigRenderer.LOCAL_USER_BINDING_TOKEN) != 1 ||
-            MppConfigRenderer.LOCAL_PROXY_PASSWORD_MATERIAL_TOKEN in raw
+            LEGACY_LOCAL_PASSWORD_TOKEN in raw
         ) {
             return MppValidationError.RAW_LOCAL_AUTH_TOKENS
         }
-        if (!isValidCredentialSecret(config.credentialSecret)) {
+        if (!isValidCredentialSecret(config)) {
             return MppValidationError.CREDENTIAL_SECRET
         }
-        if (!isSinglePemCertificate(config.pinnedCertificatePem)) {
+        if (!isSinglePemCertificate(config)) {
             return MppValidationError.CERTIFICATE
         }
-        if (config.transportSecret.isNotBlank() && !isValidTransportSecret(config.transportSecret)) {
+        if (config.transportSecret.isNotBlank() && !isValidTransportSecret(config)) {
             return MppValidationError.TRANSPORT_SECRET
         }
         return null
@@ -137,22 +149,49 @@ object MppProfileValidator {
                 value.quicIdleTimeoutMs <= MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS
     }
 
-    private fun isValidCredentialSecret(value: String): Boolean {
-        if (value.toByteArray(Charsets.UTF_8).size >= 32) return true
-        return runCatching { UUID.fromString(value.trim()) }.isSuccess
+    private fun isValidCredentialSecret(config: MppProfileConfig): Boolean {
+        val value = runCatching {
+            materialBytes(config.credentialSecret, config.editorSchemaVersion)
+        }.getOrNull() ?: return false
+        if (value.size >= 32) return true
+        val text = runCatching { MppMaterialCodec.decodeUtf8(value) }.getOrNull() ?: return false
+        return runCatching { UUID.fromString(text.trim()) }.isSuccess
     }
 
-    private fun isSinglePemCertificate(value: String): Boolean {
+    private fun isSinglePemCertificate(config: MppProfileConfig): Boolean {
+        val bytes = runCatching {
+            materialBytes(config.pinnedCertificatePem, config.editorSchemaVersion)
+        }.getOrNull() ?: return false
+        val value = runCatching { MppMaterialCodec.decodeUtf8(bytes) }.getOrNull() ?: return false
         val beginCount = Regex("-----BEGIN CERTIFICATE-----").findAll(value).count()
         val endCount = Regex("-----END CERTIFICATE-----").findAll(value).count()
         return beginCount == 1 && endCount == 1
     }
 
-    private fun isValidTransportSecret(value: String): Boolean =
-        runCatching { MppMaterialCodec.decode(value).size == 32 }.getOrDefault(false)
+    private fun isValidTransportSecret(config: MppProfileConfig): Boolean = runCatching {
+        materialBytes(
+            config.transportSecret,
+            config.editorSchemaVersion,
+            acceptedLegacyBinaryPrefix = true,
+        ).size == 32
+    }.getOrDefault(false)
+
+    private fun materialBytes(
+        value: String,
+        editorSchemaVersion: Int,
+        acceptedLegacyBinaryPrefix: Boolean = false,
+    ): ByteArray = if (editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+        MppMaterialCodec.decodeStored(value)
+    } else {
+        MppMaterialCodec.decodeLegacy(value, acceptedLegacyBinaryPrefix)
+    }
 
     private fun String.tokenCount(token: String): Int = split(token).size - 1
 
     private const val MAX_PATH_ENTRIES = 64
     private const val MAX_CARRIER_SLOTS = 64
+    private const val LEGACY_CREDENTIAL_TOKEN = "@mptunnel-profile-credential@"
+    private const val LEGACY_CERTIFICATE_TOKEN = "@mptunnel-profile-certificate@"
+    private const val LEGACY_TRANSPORT_TOKEN = "@mptunnel-profile-transport-secret@"
+    private const val LEGACY_LOCAL_PASSWORD_TOKEN = "@mptunnel-local-proxy-password@"
 }

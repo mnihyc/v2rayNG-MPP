@@ -58,19 +58,21 @@ class MppExpertEditorScreenshotSeedTest {
                 MppPathConfig(
                     name = "wifi-primary",
                     endpoint = "tcp://edge-a.example:7000-7099?" +
-                            "tcp-carriers=1-4&port-hop-interval-ms=45000&" +
-                            "srtt-ms=18&jitter-ms=4&rate-mbps=250&" +
-                            "datagram-payload-limit=1350&bulk-allowed",
+                            "max-tcp-carriers=4&port-rotation-interval-ms=45000&" +
+                            "initial-srtt-ms=18&initial-rttvar-ms=4&" +
+                            "initial-rate-mbps=250&allow-bulk=true",
                 ),
                 MppPathConfig(
                     name = "mobile-quic",
-                    endpoint = "udp://edge-b.example:7443?" +
-                            "expensive&srtt-ms=55&jitter-ms=20&rate-mbps=60",
+                    endpoint = "quic://edge-b.example:7443?expensive=true&" +
+                            "initial-srtt-ms=55&initial-rttvar-ms=20&" +
+                            "initial-rate-mbps=60&max-datagram-payload-bytes=1350",
                 ),
                 MppPathConfig(
                     name = "backup-v6",
                     endpoint = "tcp://[2001:db8::20]:8443?" +
-                            "tcp-carriers=1-1&backup&probe-only&no-udp",
+                            "max-tcp-carriers=1&backup=true&control-only=true&" +
+                            "allow-datagrams=false",
                 ),
             ),
             advanced = MppAdvancedConfig(

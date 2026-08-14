@@ -76,6 +76,9 @@ jobs:
           chmod 755 V2rayNG/gradlew
           echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
 
+      - name: Test frozen MPTUNNEL provenance revalidation
+        run: .github/scripts/test-revalidate-mptunnel-provenance.sh
+
       - name: Build HEV for supported ABIs
         env:
           HEV_ABIS: arm64-v8a x86_64
@@ -114,6 +117,8 @@ jobs:
         run: |
           ./gradlew testFdroidDebugUnitTest \
             --tests 'com.v2ray.ang.mpp.*' \
+            --tests 'com.v2ray.ang.ui.server.Mpp*Test' \
+            --tests 'com.v2ray.ang.service.Mpp*Test' \
             -PABI_FILTERS=x86_64 \
             -PUNIVERSAL_APK=false
 

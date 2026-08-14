@@ -1,10 +1,15 @@
 package com.v2ray.ang.mpp
 
 import android.content.Context
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.OutboundTrafficStat
+import com.v2ray.ang.dto.entities.MppProfileConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.JsonUtil
 import org.json.JSONObject
 
 /** Host callback used by Rust before an MPTUNNEL egress socket is connected. */
@@ -15,9 +20,8 @@ fun interface SocketProtector {
 /**
  * Small Kotlin boundary around the embedded MPTUNNEL cdylib.
  *
- * Profile materials remain first-class values in MMKV and are passed as bytes. Rust owns any
- * short-lived, app-private materialization required by the shared TOML loader; no path is exposed
- * through the profile model or editor.
+ * The editable document contains only managed placeholders. Rust finalizes those placeholders
+ * syntax-aware from Base64 bindings, then starts from the resulting self-contained TOML.
  */
 object MptunnelNative {
     private const val START_TIMEOUT_MS = 15_000L
@@ -32,16 +36,26 @@ object MptunnelNative {
 
     private var lastToPeerBytes = 0L
     private var lastFromPeerBytes = 0L
+    private var legacyMaterialCleanupComplete = false
 
     @JvmStatic
     private external fun nativeStart(
-        noBackupRoot: String,
-        profileId: String,
-        configTemplate: String,
-        materials: Array<ByteArray>,
+        configToml: String,
         protector: SocketProtector,
         readyTimeoutMs: Long,
     ): Boolean
+
+    @JvmStatic
+    private external fun nativeProjectEditor(configToml: String): String
+
+    @JvmStatic
+    private external fun nativeMigrateEditor(configToml: String): String
+
+    @JvmStatic
+    private external fun nativePatchEditor(configToml: String, projectionJson: String): String
+
+    @JvmStatic
+    private external fun nativeFinalizeEditor(configToml: String, bindingsJson: String): String
 
     @JvmStatic
     private external fun nativeStop(timeoutMs: Long): Boolean
@@ -58,19 +72,19 @@ object MptunnelNative {
     @JvmStatic
     private external fun nativeStatsJson(): String
 
-    @JvmStatic
-    private external fun nativeDeleteProfile(noBackupRoot: String, profileId: String): Boolean
-
     @Synchronized
     fun start(
         context: Context,
-        profileId: String,
         profile: ProfileItem,
         socksPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
         protector: SocketProtector,
     ): Boolean {
+        if (!legacyMaterialCleanupComplete) {
+            cleanupLegacyMaterialRoot(context)
+            legacyMaterialCleanupComplete = true
+        }
         requireLoaded()
         val mpp = requireNotNull(profile.mpp) { "MPP profile data is missing" }
         MppProfileValidator.validate(mpp)?.let { error("Invalid MPP profile: ${it.name}") }
@@ -78,29 +92,28 @@ object MptunnelNative {
         val username = proxyUsername.orEmpty()
         val password = proxyPassword.orEmpty()
         val localAuthEnabled = username.isNotBlank() && password.isNotBlank()
-        val configTemplate = MppConfigRenderer.renderRuntime(
-            profile = profile,
+        val editorToml = canonicalEditorDocument(profile)
+        val bindings = finalizeBindings(
+            config = mpp,
             socksPort = socksPort,
-            proxyUsername = if (localAuthEnabled) username else "",
-            hasProxyPassword = localAuthEnabled,
+            localAuth = if (localAuthEnabled) {
+                MppFinalizeBindings.LocalAuth(
+                    username = username,
+                    passwordBase64 = MppMaterialCodec.encodeStored(
+                        password.toByteArray(Charsets.UTF_8)
+                    ),
+                )
+            } else {
+                null
+            },
         )
-        val materials = arrayOf(
-            mpp.credentialSecret.toByteArray(Charsets.UTF_8),
-            mpp.pinnedCertificatePem.toByteArray(Charsets.UTF_8),
-            mpp.transportSecret.takeIf(String::isNotBlank)
-                ?.let(MppMaterialCodec::decode)
-                ?: byteArrayOf(),
-            if (localAuthEnabled) password.toByteArray(Charsets.UTF_8) else byteArrayOf(),
-        )
+        val configToml = nativeFinalizeEditor(editorToml, MppEditorJson.encode(bindings))
 
         lastToPeerBytes = 0L
         lastFromPeerBytes = 0L
         return try {
             nativeStart(
-                context.noBackupFilesDir.absolutePath,
-                profileId,
-                configTemplate,
-                materials,
+                configToml,
                 protector,
                 START_TIMEOUT_MS,
             )
@@ -112,9 +125,48 @@ object MptunnelNative {
                 failure.message?.takeUnless(String::isBlank) ?: "MPTUNNEL failed to start",
                 failure,
             )
-        } finally {
-            materials.forEach { material -> material.fill(0) }
         }
+    }
+
+    fun projectEditor(configToml: String): MppEditorProjection {
+        requireLoaded()
+        val projection = JsonUtil.fromJsonSafe(
+            nativeProjectEditor(configToml),
+            MppEditorProjection::class.java,
+        ) ?: error("MPTUNNEL returned an invalid editor projection")
+        require(projection.schemaVersion == MppEditorProjection.SCHEMA_VERSION) {
+            "unsupported MPTUNNEL editor projection"
+        }
+        return projection
+    }
+
+    fun migrateEditor(configToml: String): String {
+        requireLoaded()
+        return nativeMigrateEditor(configToml)
+    }
+
+    fun patchEditor(configToml: String, projection: MppEditorProjection): String {
+        requireLoaded()
+        require(projection.schemaVersion == MppEditorProjection.SCHEMA_VERSION) {
+            "unsupported MPTUNNEL editor projection"
+        }
+        return nativePatchEditor(configToml, MppEditorJson.encode(projection))
+    }
+
+    /** Syntax-aware raw-save validation without forcing the document into a guided projection. */
+    fun validateEditor(config: MppProfileConfig) {
+        requireLoaded()
+        require(config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION)
+        nativeFinalizeEditor(
+            config.editorToml,
+            MppEditorJson.encode(
+                finalizeBindings(
+                    config = config,
+                    socksPort = VALIDATION_SOCKS_PORT,
+                    localAuth = null,
+                )
+            ),
+        )
     }
 
     @Synchronized
@@ -160,14 +212,112 @@ object MptunnelNative {
         }
     }
 
-    fun deleteProfile(context: Context, profileId: String): Boolean {
-        requireLoaded()
-        return nativeDeleteProfile(context.noBackupFilesDir.absolutePath, profileId)
-    }
-
     private fun requireLoaded() {
         loadFailure?.let {
             throw IllegalStateException("MPTUNNEL native library is unavailable", it)
         }
+    }
+
+    /** Removes only the private material tree used by pre-inline Android bridge releases. */
+    internal fun cleanupLegacyMaterialRoot(context: Context) {
+        val root = context.noBackupFilesDir.resolve(LEGACY_MATERIAL_DIRECTORY)
+        if (legacyNodeType(root) == LegacyNodeType.MISSING) return
+        removeLegacyNode(root)
+        check(legacyNodeType(root) == LegacyNodeType.MISSING) {
+            LEGACY_CLEANUP_FAILURE
+        }
+    }
+
+    private fun removeLegacyNode(node: java.io.File) {
+        if (legacyNodeType(node) == LegacyNodeType.DIRECTORY) {
+            val children = node.listFiles() ?: error(LEGACY_CLEANUP_FAILURE)
+            children.forEach(::removeLegacyNode)
+        }
+        if (!node.delete() && legacyNodeType(node) != LegacyNodeType.MISSING) {
+            error(LEGACY_CLEANUP_FAILURE)
+        }
+    }
+
+    /** lstat keeps a legacy symlink confined to deleting the link itself. */
+    private fun legacyNodeType(node: java.io.File): LegacyNodeType = try {
+        if (OsConstants.S_ISDIR(Os.lstat(node.absolutePath).st_mode)) {
+            LegacyNodeType.DIRECTORY
+        } else {
+            LegacyNodeType.OTHER
+        }
+    } catch (failure: ErrnoException) {
+        if (failure.errno == OsConstants.ENOENT) {
+            LegacyNodeType.MISSING
+        } else {
+            // Never propagate an OS exception whose message contains the private path.
+            error(LEGACY_CLEANUP_FAILURE)
+        }
+    } catch (_: SecurityException) {
+        error(LEGACY_CLEANUP_FAILURE)
+    }
+
+    private fun canonicalEditorDocument(profile: ProfileItem): String {
+        val config = requireNotNull(profile.mpp)
+        if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+            config.editorToml.isNotBlank()
+        ) {
+            return config.editorToml
+        }
+        if (config.useRawToml && config.rawToml.isNotBlank()) {
+            return migrateEditor(config.rawToml)
+        }
+        val legacyDocument = MppConfigRenderer.renderEditableTemplate(
+            profile.server.orEmpty(),
+            config,
+        )
+        val projection = projectEditor(legacyDocument)
+        return patchEditor(legacyDocument, projection)
+    }
+
+    private fun canonicalMaterial(
+        value: String,
+        editorSchemaVersion: Int,
+        acceptedLegacyBinaryPrefix: Boolean = false,
+    ): String = if (editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+        MppMaterialCodec.encodeStored(MppMaterialCodec.decodeStored(value))
+    } else {
+        MppMaterialCodec.encodeStored(
+            MppMaterialCodec.decodeLegacy(value, acceptedLegacyBinaryPrefix)
+        )
+    }
+
+    private fun finalizeBindings(
+        config: MppProfileConfig,
+        socksPort: Int,
+        localAuth: MppFinalizeBindings.LocalAuth?,
+    ) = MppFinalizeBindings(
+        socksPort = socksPort,
+        credentialBase64 = canonicalMaterial(
+            config.credentialSecret,
+            config.editorSchemaVersion,
+        ),
+        pinnedCertificateBase64 = canonicalMaterial(
+            config.pinnedCertificatePem,
+            config.editorSchemaVersion,
+        ),
+        transportSecretBase64 = config.transportSecret.takeIf(String::isNotBlank)?.let {
+            canonicalMaterial(
+                it,
+                config.editorSchemaVersion,
+                acceptedLegacyBinaryPrefix = true,
+            )
+        },
+        localAuth = localAuth,
+    )
+
+    private const val VALIDATION_SOCKS_PORT = 10808
+    private const val LEGACY_MATERIAL_DIRECTORY = "mptunnel"
+    private const val LEGACY_CLEANUP_FAILURE =
+        "Unable to remove legacy MPTUNNEL material storage"
+
+    private enum class LegacyNodeType {
+        MISSING,
+        DIRECTORY,
+        OTHER,
     }
 }

@@ -157,7 +157,7 @@ object CoreServiceManager {
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting $engineName for ${config.remarks}")
         currentConfig = config
         if (config.configType == EConfigType.MPP) {
-            launchMptunnel(service, guid, config)
+            launchMptunnel(service, config)
         } else {
             launchXray(service, guid, config, vpnInterface)
         }
@@ -174,7 +174,7 @@ object CoreServiceManager {
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: $engineName started successfully")
     }
 
-    private fun launchMptunnel(service: Service, guid: String, config: ProfileItem) {
+    private fun launchMptunnel(service: Service, config: ProfileItem) {
         stopBrowserDialer(reconcileXray = false)
         activeEngine = ActiveEngine.MPTUNNEL
         val protector = SocketProtector { fd ->
@@ -182,7 +182,6 @@ object CoreServiceManager {
         }
         val started = MptunnelNative.start(
             context = service,
-            profileId = guid,
             profile = config,
             socksPort = SettingsManager.getSocksPort(),
             proxyUsername = SettingsManager.getSocksUsername(),

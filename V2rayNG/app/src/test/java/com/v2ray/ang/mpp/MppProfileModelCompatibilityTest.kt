@@ -9,13 +9,15 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.ui.server.ServerUiState
 import com.v2ray.ang.util.JsonUtil
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MppProfileModelCompatibilityTest {
 
     @Test
-    fun legacyMmkvJsonUsesExactLegacyPathSynthesis() {
+    fun legacyStructuredMmkvJsonSynthesizesCanonicalPaths() {
         val legacyJson = """
             {
               "configType": "MPP",
@@ -40,11 +42,11 @@ class MppProfileModelCompatibilityTest {
             listOf(
                 MppPathConfig(
                     name = "path-tcp",
-                    endpoint = "tcp://[2001:db8::10]:7443?tcp-carriers=1-5",
+                    endpoint = "tcp://[2001:db8::10]:7443?max-tcp-carriers=5",
                 ),
                 MppPathConfig(
-                    name = "path-udp",
-                    endpoint = "udp://[2001:db8::10]:9443",
+                    name = "path-quic",
+                    endpoint = "quic://[2001:db8::10]:9443",
                 ),
             ),
             config.effectivePaths(profile.server.orEmpty()),
@@ -57,12 +59,13 @@ class MppProfileModelCompatibilityTest {
             MppPathConfig(
                 name = "fiber-primary",
                 endpoint = "tcp://edge-a.example:7000-7099" +
-                        "?tcp-carriers=1-4&port-hop-interval-ms=30000&rate-mbps=900",
+                        "?max-tcp-carriers=4&port-rotation-interval-ms=30000&" +
+                        "initial-rate-mbps=900",
             ),
             MppPathConfig(
                 name = "cell-backup",
-                endpoint = "udp://[2001:db8::20]:8443" +
-                        "?backup=true&expensive=true&datagram-payload-limit=1200",
+                endpoint = "quic://[2001:db8::20]:8443" +
+                        "?backup=true&expensive=true&max-datagram-payload-bytes=1200",
             ),
         )
         val advanced = MppAdvancedConfig(
@@ -100,6 +103,38 @@ class MppProfileModelCompatibilityTest {
     }
 
     @Test
+    fun saverPreservesLegacyRawAuthorityUntilNativeMigrationCompletes() {
+        val legacyRaw = """
+            # distinctive legacy raw document
+            [custom]
+            preserved = "byte-for-byte authority"
+        """.trimIndent()
+        val original = ProfileItem(
+            configType = EConfigType.MPP,
+            mpp = MppProfileConfig(
+                useRawToml = true,
+                rawToml = legacyRaw,
+                credentialSecret = "legacy credential material",
+                pinnedCertificatePem = "legacy certificate material",
+            ),
+        )
+        val state = ServerUiState.fromProfileItem(original)
+
+        val saved = ServerUiState.Saver.run {
+            SaverScope { true }.save(state)
+        }
+        val restored = requireNotNull(ServerUiState.Saver.restore(requireNotNull(saved)))
+
+        assertEquals(
+            MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION,
+            restored.mppConfig.editorSchemaVersion,
+        )
+        assertEquals(legacyRaw, restored.mppConfig.rawToml)
+        assertEquals("", restored.mppConfig.editorToml)
+        assertEquals(original.mpp, restored.mppConfig)
+    }
+
+    @Test
     fun explicitSummarySkipsMalformedPathAndDoesNotUseStaleTopLevelServer() {
         val original = ProfileItem(
             configType = EConfigType.MPP,
@@ -108,7 +143,7 @@ class MppProfileModelCompatibilityTest {
             mpp = MppProfileConfig(
                 paths = listOf(
                     MppPathConfig("broken", "not-an-endpoint"),
-                    MppPathConfig("quic-range", "udp://[2001:db8::42]:8000-8010"),
+                    MppPathConfig("quic-range", "quic://[2001:db8::42]:8000-8010"),
                 )
             ),
         )
@@ -152,5 +187,77 @@ class MppProfileModelCompatibilityTest {
 
         assertEquals(emptyList<MppPathConfig>(), restored.paths)
         assertEquals(emptyList<MppPathConfig>(), restored.effectivePaths("server.example"))
+    }
+
+    @Test
+    fun legacyHexLookingTextMigratesAsItsExactUtf8BytesWithoutDetection() {
+        val legacyText = "0123456789abcdef0123456789abcdef"
+        val certificate = """
+            -----BEGIN CERTIFICATE-----
+            ZHVtbXk=
+            -----END CERTIFICATE-----
+        """.trimIndent()
+        val profile = ProfileItem(
+            configType = EConfigType.MPP,
+            mpp = MppProfileConfig(
+                credentialSecret = legacyText,
+                pinnedCertificatePem = certificate,
+            ),
+        )
+
+        val state = ServerUiState.fromProfileItem(profile)
+        assertEquals(
+            MppMaterialCodec.encodeHex(MppMaterialCodec.encodeUtf8(legacyText)),
+            state.mppCredentialHex,
+        )
+        assertEquals(certificate, state.mppCertificatePem)
+
+        state.mppConfig = state.mppConfig.copy(
+            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            editorToml = "# managed editor fixture",
+        )
+        val saved = requireNotNull(state.toProfileItem(profile).mpp)
+        assertEquals(
+            MppMaterialCodec.encodeUtf8(legacyText).toList(),
+            MppMaterialCodec.decodeStored(saved.credentialSecret).toList(),
+        )
+        assertEquals(
+            certificate,
+            MppMaterialCodec.decodeUtf8(
+                MppMaterialCodec.decodeStored(saved.pinnedCertificatePem)
+            ),
+        )
+        assertFalse(saved.credentialSecret.startsWith(MppMaterialCodec.LEGACY_BASE64_PREFIX))
+    }
+
+    @Test
+    fun malformedOptionalTransportIsNeverSilentlySavedAsAbsent() {
+        val invalidTransport = "not-canonical-base64!"
+        val profile = ProfileItem(
+            configType = EConfigType.MPP,
+            mpp = MppProfileConfig(
+                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                editorToml = "# managed editor fixture",
+                credentialSecret = MppMaterialCodec.encodeStored(ByteArray(32)),
+                pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                    MppMaterialCodec.encodeUtf8(
+                        "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----"
+                    )
+                ),
+                transportSecret = invalidTransport,
+            ),
+        )
+
+        val restored = ServerUiState.fromProfileItem(profile)
+        assertTrue(restored.mppTransportDecodeFailed)
+        assertEquals(
+            invalidTransport,
+            restored.toProfileItem(profile).mpp?.transportSecret,
+        )
+
+        restored.mppTransportDecodeFailed = false
+        restored.mppTransportHex = "abc"
+        val malformedEdit = requireNotNull(restored.toProfileItem(profile).mpp)
+        assertEquals(MppValidationError.TRANSPORT_SECRET, MppProfileValidator.validate(malformedEdit))
     }
 }

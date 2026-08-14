@@ -7,7 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import com.tencent.mmkv.MMKV
-import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
 import com.v2ray.ang.AppConfig.PREF_IS_BOOTED
 import com.v2ray.ang.AppConfig.PREF_ROUTING_RULESET
@@ -19,8 +18,6 @@ import com.v2ray.ang.dto.entities.ServerAffiliationInfo
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.dto.entities.WebDavConfig
-import com.v2ray.ang.enums.EConfigType
-import com.v2ray.ang.mpp.MptunnelNative
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.flow.collectLatest
@@ -219,7 +216,6 @@ object MmkvManager {
         if (getSelectServer() == guid) {
             mainStorage.remove(KEY_SELECTED_SERVER)
         }
-        removeMppNativeProfile(config, guid)
         profileFullStorage.remove(guid)
         serverAffStorage.remove(guid)
     }
@@ -235,11 +231,9 @@ object MmkvManager {
 
         // Remove all servers in the list
         serverList.forEach { guid ->
-            val config = decodeServerConfig(guid)
             if (getSelectServer() == guid) {
                 mainStorage.remove(KEY_SELECTED_SERVER)
             }
-            removeMppNativeProfile(config, guid)
             profileFullStorage.remove(guid)
             serverAffStorage.remove(guid)
         }
@@ -264,22 +258,12 @@ object MmkvManager {
 
         val selectedServer = getSelectServer()
         guids.forEach { guid ->
-            val config = decodeServerConfig(guid)
             if (selectedServer == guid) {
                 mainStorage.remove(KEY_SELECTED_SERVER)
             }
-            removeMppNativeProfile(config, guid)
             profileFullStorage.remove(guid)
             serverAffStorage.remove(guid)
             serverRawStorage.remove(guid)
-        }
-    }
-
-    /** Removes app-private native state without making profile deletion depend on JNI availability. */
-    private fun removeMppNativeProfile(config: ProfileItem?, guid: String) {
-        if (config?.configType != EConfigType.MPP) return
-        runCatching {
-            MptunnelNative.deleteProfile(AngApplication.application, guid)
         }
     }
 
@@ -336,9 +320,6 @@ object MmkvManager {
      */
     fun removeAllServer(): Int {
         val profileIds = profileFullStorage.allKeys().orEmpty()
-        profileIds.forEach { guid ->
-            removeMppNativeProfile(decodeServerConfig(guid), guid)
-        }
         val count = profileIds.count()
         profileFullStorage.clearAll()
         serverAffStorage.clearAll()

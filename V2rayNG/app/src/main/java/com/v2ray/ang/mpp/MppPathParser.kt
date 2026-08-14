@@ -1,19 +1,18 @@
 package com.v2ray.ang.mpp
 
 import java.math.BigInteger
-import java.net.Inet6Address
 import java.net.InetAddress
 
-/** The two native MPTUNNEL carrier transports. UDP endpoints are QUIC carriers. */
+/** The two native MPTUNNEL carrier transports. */
 enum class MppPathUnderlay {
     TCP,
-    UDP,
+    QUIC,
 }
 
-/** One query item in its original order. Values are not URL-decoded by MPTUNNEL. */
+/** One explicitly-valued query item in its original order. */
 data class MppPathQueryOption(
     val key: String,
-    val value: String?,
+    val value: String,
 )
 
 /** Parsed native carrier endpoint data useful to the editor, summaries, and endpoint probing. */
@@ -32,14 +31,36 @@ data class MppParsedPath(
         get() = if (underlay == MppPathUnderlay.TCP) tcpCarrierMax else 1
 }
 
-/** Strict parser for the current native `PathSpec` text grammar. */
+/** Strict Android mirror of MPTUNNEL's current client `PathSpec` text grammar. */
 object MppPathParser {
-    private const val DEFAULT_TCP_CARRIER_MAX = 3
-    private const val MIN_PORT_HOP_INTERVAL_MS = 5_000L
+    const val DEFAULT_TCP_CARRIER_MAX = 3
+    const val DEFAULT_PORT_ROTATION_INTERVAL_MS = 300_000L
+
+    val QUERY_KEYS: List<String> = listOf(
+        "source-address",
+        "initial-srtt-ms",
+        "initial-rttvar-ms",
+        "initial-rate-bps",
+        "initial-rate-kbps",
+        "initial-rate-mbps",
+        "initial-rate",
+        "max-datagram-payload-bytes",
+        "max-tcp-carriers",
+        "port-rotation-interval-ms",
+        "backup",
+        "expensive",
+        "allow-bulk",
+        "control-only",
+        "allow-datagrams",
+    )
+
+    private const val MIN_PORT_ROTATION_INTERVAL_MS = 5_000L
     private val U16_MAX = BigInteger.valueOf(65_535)
     private val U32_MAX = BigInteger("4294967295")
     private val U64_MAX = BigInteger("18446744073709551615")
     private val policyId = Regex("[a-z0-9][a-z0-9._-]{0,63}")
+    private val canonicalPort = Regex("[1-9][0-9]*")
+    private val unsignedInteger = Regex("\\+?[0-9]+")
 
     fun isCanonicalName(name: String): Boolean = policyId.matches(name)
 
@@ -48,74 +69,80 @@ object MppPathParser {
         if (schemeEnd < 0) return null
         val underlay = when (endpoint.substring(0, schemeEnd)) {
             "tcp" -> MppPathUnderlay.TCP
-            "udp" -> MppPathUnderlay.UDP
+            "quic" -> MppPathUnderlay.QUIC
             else -> return null
         }
         val path = endpoint.substring(schemeEnd + 3)
         val queryStart = path.indexOf('?')
-        val authority = (if (queryStart >= 0) path.substring(0, queryStart) else path).trim()
+        val authority = if (queryStart >= 0) path.substring(0, queryStart) else path
         val query = if (queryStart >= 0) path.substring(queryStart + 1) else null
         val parsedAuthority = parseAuthority(authority) ?: return null
         val options = parseOptions(query) ?: return null
 
-        val scalarKeys = hashSetOf<String>()
+        val seen = HashSet<String>(options.size)
         var rateSeen = false
         var tcpCarrierMax = DEFAULT_TCP_CARRIER_MAX
-        var tcpCarriersPresent = false
-        var hopIntervalPresent = false
-        var noUdp = false
+        var maxTcpCarriersPresent = false
+        var maxDatagramPayloadPresent = false
+        var portRotationPresent = false
+        var allowDatagramsPresent = false
 
         for (option in options) {
             val key = option.key
             val value = option.value
+            if (!seen.add(key)) return null
             when (key) {
-                "source-ip" -> {
-                    if (!scalarKeys.add(key) || value == null || !isIpAddress(value)) return null
+                "source-address" -> if (!isIpAddress(value)) return null
+                "initial-srtt-ms" -> {
+                    val parsed = parseUnsigned(value, U32_MAX) ?: return null
+                    if (parsed == BigInteger.ZERO) return null
                 }
-                "srtt-ms", "jitter-ms" -> {
-                    if (!scalarKeys.add(key) || parseUnsigned(value, U32_MAX) == null) return null
-                }
-                "rate-bps", "rate-kbps", "rate-mbps" -> {
+                "initial-rttvar-ms" -> if (parseUnsigned(value, U32_MAX) == null) return null
+                "initial-rate-bps", "initial-rate-kbps", "initial-rate-mbps" -> {
                     if (rateSeen) return null
                     rateSeen = true
                     val parsed = parseUnsigned(value, U64_MAX) ?: return null
+                    if (parsed == BigInteger.ZERO) return null
                     val multiplier = when (key) {
-                        "rate-kbps" -> BigInteger.valueOf(1_000)
-                        "rate-mbps" -> BigInteger.valueOf(1_000_000)
+                        "initial-rate-kbps" -> BigInteger.valueOf(1_000)
+                        "initial-rate-mbps" -> BigInteger.valueOf(1_000_000)
                         else -> BigInteger.ONE
                     }
                     if (parsed.multiply(multiplier) > U64_MAX) return null
                 }
-                "rate" -> {
+                "initial-rate" -> {
                     if (rateSeen || value !in setOf("unknown", "unlimited")) return null
                     rateSeen = true
                 }
-                "datagram-payload-limit" -> {
-                    if (!scalarKeys.add(key)) return null
+                "max-datagram-payload-bytes" -> {
                     val parsed = parseUnsigned(value, U16_MAX)?.toInt() ?: return null
                     if (parsed !in 512..65_000) return null
+                    maxDatagramPayloadPresent = true
                 }
-                "tcp-carriers" -> {
-                    if (!scalarKeys.add(key)) return null
-                    tcpCarrierMax = parseTcpCarrierMax(value) ?: return null
-                    tcpCarriersPresent = true
+                "max-tcp-carriers" -> {
+                    val parsed = parseUnsigned(value, U16_MAX)?.toInt() ?: return null
+                    if (parsed == 0) return null
+                    tcpCarrierMax = parsed
+                    maxTcpCarriersPresent = true
                 }
-                "port-hop-interval-ms" -> {
-                    if (!scalarKeys.add(key)) return null
+                "port-rotation-interval-ms" -> {
                     val parsed = parseUnsigned(value, U32_MAX)?.toLong() ?: return null
-                    if (parsed < MIN_PORT_HOP_INTERVAL_MS) return null
-                    hopIntervalPresent = true
+                    if (parsed < MIN_PORT_ROTATION_INTERVAL_MS) return null
+                    portRotationPresent = true
                 }
-                "backup", "expensive", "bulk-allowed", "probe-only", "no-udp" -> {
-                    val parsed = parseBooleanFlag(value) ?: return null
-                    if (key == "no-udp") noUdp = parsed
+                "backup", "expensive", "allow-bulk", "control-only", "allow-datagrams" -> {
+                    if (value != "true" && value != "false") return null
+                    if (key == "allow-datagrams") allowDatagramsPresent = true
                 }
                 else -> return null
             }
         }
 
-        if (underlay == MppPathUnderlay.UDP && (tcpCarriersPresent || noUdp)) return null
-        if (hopIntervalPresent && parsedAuthority.firstPort == parsedAuthority.lastPort) return null
+        if (underlay == MppPathUnderlay.QUIC && (maxTcpCarriersPresent || allowDatagramsPresent)) {
+            return null
+        }
+        if (underlay == MppPathUnderlay.TCP && maxDatagramPayloadPresent) return null
+        if (portRotationPresent && parsedAuthority.firstPort == parsedAuthority.lastPort) return null
         return MppParsedPath(
             underlay = underlay,
             host = parsedAuthority.host,
@@ -127,22 +154,26 @@ object MppPathParser {
     }
 
     private fun parseAuthority(value: String): ParsedAuthority? {
-        if (value.isEmpty()) return null
+        if (value.isEmpty() || value.trim() != value) return null
         val host: String
         val ports: String
         if (value.startsWith('[')) {
             val close = value.indexOf(']')
             if (close < 0 || close + 1 >= value.length || value[close + 1] != ':') return null
             host = value.substring(1, close)
+            if (!isIpv6Address(host)) return null
             ports = value.substring(close + 2)
         } else {
             val colon = value.lastIndexOf(':')
             if (colon < 0) return null
             host = value.substring(0, colon)
             ports = value.substring(colon + 1)
-            if (':' in host) return null
+            if (host.isEmpty() || ':' in host || '[' in host || ']' in host ||
+                host.any(Char::isWhitespace)
+            ) {
+                return null
+            }
         }
-        if (host.isEmpty()) return null
 
         val dash = ports.indexOf('-')
         if (dash < 0) {
@@ -162,48 +193,38 @@ object MppPathParser {
         return query.split('&').map { part ->
             if (part.isEmpty()) return null
             val equals = part.indexOf('=')
-            if (equals < 0) {
-                MppPathQueryOption(part, null)
-            } else {
-                MppPathQueryOption(part.substring(0, equals), part.substring(equals + 1))
-            }
+            if (equals <= 0 || equals == part.lastIndex) return null
+            MppPathQueryOption(part.substring(0, equals), part.substring(equals + 1))
         }
     }
 
-    private fun parsePort(value: String): Int? =
-        value.toIntOrNull()?.takeIf { it in 1..65_535 }
-
-    private fun parseTcpCarrierMax(value: String?): Int? {
-        if (value == null) return null
-        val dash = value.indexOf('-')
-        if (dash <= 0 || dash == value.lastIndex || value.indexOf('-', dash + 1) >= 0) return null
-        val minimum = parsePort(value.substring(0, dash)) ?: return null
-        val maximum = parsePort(value.substring(dash + 1)) ?: return null
-        return maximum.takeIf { minimum <= maximum }
+    private fun parsePort(value: String): Int? {
+        if (!canonicalPort.matches(value)) return null
+        return value.toIntOrNull()?.takeIf { it in 1..65_535 }
     }
 
-    private fun parseUnsigned(value: String?, maximum: BigInteger): BigInteger? {
-        if (value == null || !Regex("\\+?[0-9]+").matches(value)) return null
+    private fun parseUnsigned(value: String, maximum: BigInteger): BigInteger? {
+        if (!unsignedInteger.matches(value)) return null
         return runCatching { BigInteger(value) }.getOrNull()?.takeIf { it <= maximum }
     }
 
-    private fun parseBooleanFlag(value: String?): Boolean? = when (value ?: "true") {
-        "true" -> true
-        "false" -> false
-        else -> null
-    }
+    private fun isIpAddress(value: String): Boolean =
+        if (':' in value) isIpv6Address(value) else isIpv4Address(value)
 
-    private fun isIpAddress(value: String): Boolean {
-        if (value.isEmpty() || '%' in value || '[' in value || ']' in value) return false
-        if (':' in value) {
-            return runCatching { InetAddress.getByName(value) is Inet6Address }.getOrDefault(false)
-        }
+    private fun isIpv4Address(value: String): Boolean {
         val octets = value.split('.')
         return octets.size == 4 && octets.all { octet ->
             octet.isNotEmpty() && octet.all { it in '0'..'9' } &&
                     (octet == "0" || !octet.startsWith('0')) &&
                     octet.toIntOrNull()?.let { it in 0..255 } == true
         }
+    }
+
+    private fun isIpv6Address(value: String): Boolean {
+        if (value.isEmpty() || ':' !in value || '%' in value || '[' in value || ']' in value) {
+            return false
+        }
+        return runCatching { InetAddress.getByName(value) }.isSuccess
     }
 
     private data class ParsedAuthority(

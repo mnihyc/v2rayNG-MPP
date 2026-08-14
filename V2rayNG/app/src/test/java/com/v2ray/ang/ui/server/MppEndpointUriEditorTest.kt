@@ -9,21 +9,21 @@ import org.junit.Test
 class MppEndpointUriEditorTest {
 
     @Test
-    fun parseAndRenderPreserveRawPortsAndOrderedOptions() {
-        val uri = "tcp://edge.example:07000-07999?backup=true&rate-bps=+1000&" +
-                "expensive=false&probe-only"
+    fun parseAndRenderPreserveCanonicalPortsAndOrderedExplicitOptions() {
+        val uri = "tcp://edge.example:7000-7999?backup=true&initial-rate-bps=+1000&" +
+                "expensive=false&control-only=true"
 
         val parsed = MppEndpointUriEditor.parse(uri)!!
 
         assertEquals(MppPathUnderlay.TCP, parsed.underlay)
         assertEquals("edge.example", parsed.host)
-        assertEquals("07000-07999", parsed.ports)
+        assertEquals("7000-7999", parsed.ports)
         assertEquals(
             listOf(
                 MppEditableEndpointOption("backup", "true"),
-                MppEditableEndpointOption("rate-bps", "+1000"),
+                MppEditableEndpointOption("initial-rate-bps", "+1000"),
                 MppEditableEndpointOption("expensive", "false"),
-                MppEditableEndpointOption("probe-only", null),
+                MppEditableEndpointOption("control-only", "true"),
             ),
             parsed.options,
         )
@@ -31,133 +31,192 @@ class MppEndpointUriEditorTest {
     }
 
     @Test
-    fun scalarEditCanonicalizesOnlyItsTarget() {
-        val uri = "tcp://edge.example:443?backup=true&srtt-ms=+20&" +
-                "rate-bps=+1000&expensive=false&probe-only"
+    fun scalarEditChangesOnlyItsCanonicalTarget() {
+        val uri = "tcp://edge.example:443?backup=true&initial-srtt-ms=+20&" +
+                "initial-rate-bps=+1000&expensive=false&control-only=true"
 
         assertEquals(
-            "tcp://edge.example:443?backup=true&srtt-ms=30&" +
-                    "rate-bps=+1000&expensive=false&probe-only",
-            MppEndpointUriEditor.withScalarOption(uri, "srtt-ms", "30"),
+            "tcp://edge.example:443?backup=true&initial-srtt-ms=30&" +
+                    "initial-rate-bps=+1000&expensive=false&control-only=true",
+            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-ms", "30"),
         )
         assertEquals(
-            "tcp://edge.example:443?backup=true&rate-bps=+1000&" +
-                    "expensive=false&probe-only",
-            MppEndpointUriEditor.withScalarOption(uri, "srtt-ms", null),
+            "tcp://edge.example:443?backup=true&initial-rate-bps=+1000&" +
+                    "expensive=false&control-only=true",
+            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-ms", null),
         )
         assertEquals(
-            "$uri&jitter-ms=5",
-            MppEndpointUriEditor.withScalarOption(uri, "jitter-ms", "5"),
+            "$uri&initial-rttvar-ms=5",
+            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-ms", "5"),
         )
-        assertEquals(uri, MppEndpointUriEditor.withScalarOption(uri, "jitter-ms", null))
+        assertEquals(
+            uri,
+            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-ms", null),
+        )
     }
 
     @Test
-    fun tcpToUdpDropsOnlyTransportIncompatibleOptions() {
-        val uri = "tcp://edge.example:7000-7999?backup=true&tcp-carriers=1-5&" +
-                "rate-mbps=25&no-udp=false&port-hop-interval-ms=45000&probe-only"
+    fun transportChangeDropsOnlyOptionsInapplicableToItsTarget() {
+        val tcp = "tcp://edge.example:7000-7999?backup=true&max-tcp-carriers=5&" +
+                "initial-rate-mbps=25&allow-datagrams=false&" +
+                "port-rotation-interval-ms=45000&control-only=true"
 
-        val rewritten = MppEndpointUriEditor.withUnderlay(uri, MppPathUnderlay.UDP)
+        val quic = MppEndpointUriEditor.withUnderlay(tcp, MppPathUnderlay.QUIC)
 
         assertEquals(
-            "udp://edge.example:7000-7999?backup=true&rate-mbps=25&" +
-                    "port-hop-interval-ms=45000&probe-only",
-            rewritten,
+            "quic://edge.example:7000-7999?backup=true&initial-rate-mbps=25&" +
+                    "port-rotation-interval-ms=45000&control-only=true",
+            quic,
         )
-        assertEquals(uri, MppEndpointUriEditor.withUnderlay(uri, MppPathUnderlay.TCP))
-        assertEquals(MppPathUnderlay.UDP, MppPathParser.parse(rewritten!!)!!.underlay)
+        assertEquals(tcp, MppEndpointUriEditor.withUnderlay(tcp, MppPathUnderlay.TCP))
+        assertEquals(MppPathUnderlay.QUIC, MppPathParser.parse(quic!!)!!.underlay)
+
+        val quicWithPayload =
+            "quic://edge.example:7443?max-datagram-payload-bytes=1400&backup=false"
+        assertEquals(
+            "tcp://edge.example:7443?backup=false",
+            MppEndpointUriEditor.withUnderlay(quicWithPayload, MppPathUnderlay.TCP),
+        )
     }
 
     @Test
-    fun booleanEditUsesBareFlagAndRemovesEveryTargetOccurrence() {
-        val uri = "tcp://edge.example:443?backup=false&rate-mbps=25&" +
-                "backup=true&expensive=false&probe-only"
+    fun editorRefusesTransportAndRangeInapplicableOptions() {
+        val tcp = "tcp://edge.example:443"
+        val quic = "quic://edge.example:443"
+
+        assertNull(
+            MppEndpointUriEditor.withScalarOption(
+                tcp,
+                "max-datagram-payload-bytes",
+                "1400",
+            )
+        )
+        assertNull(
+            MppEndpointUriEditor.withScalarOption(quic, "max-tcp-carriers", "3")
+        )
+        assertNull(
+            MppEndpointUriEditor.withScalarOption(
+                quic,
+                "port-rotation-interval-ms",
+                "300000",
+            )
+        )
+        assertNull(
+            MppEndpointUriEditor.withBooleanOption(quic, "allow-datagrams", false)
+        )
+    }
+
+    @Test
+    fun booleanEditAlwaysRendersExplicitValueAndRepairsTargetDuplicates() {
+        val uri = "tcp://edge.example:443?backup=false&initial-rate-mbps=25&" +
+                "expensive=false&control-only=true"
 
         assertEquals(
-            "tcp://edge.example:443?backup&rate-mbps=25&expensive=false&probe-only",
+            "tcp://edge.example:443?backup=true&initial-rate-mbps=25&" +
+                    "expensive=false&control-only=true",
             MppEndpointUriEditor.withBooleanOption(uri, "backup", true),
         )
         assertEquals(
-            "tcp://edge.example:443?rate-mbps=25&expensive=false&probe-only",
+            "tcp://edge.example:443?backup=false&initial-rate-mbps=25&" +
+                    "expensive=false&control-only=true",
             MppEndpointUriEditor.withBooleanOption(uri, "backup", false),
         )
         assertEquals(
-            "$uri&bulk-allowed",
-            MppEndpointUriEditor.withBooleanOption(uri, "bulk-allowed", true),
+            "$uri&allow-bulk=false",
+            MppEndpointUriEditor.withBooleanOption(uri, "allow-bulk", false),
+        )
+
+        val duplicateDraft = "tcp://edge.example:443?backup=false&backup=true"
+        assertEquals(
+            "tcp://edge.example:443?backup=true",
+            MppEndpointUriEditor.withBooleanOption(
+                duplicateDraft,
+                "backup",
+                true,
+                allowDraftSource = true,
+            ),
         )
     }
 
     @Test
-    fun rateEditTreatsEveryRateSpellingAsOneOptionGroup() {
+    fun rateEditTreatsEveryCanonicalRateFormAsOneOptionGroup() {
         val variants = listOf(
-            "rate=unknown",
-            "rate-bps=+1",
-            "rate-kbps=2",
-            "rate-mbps=3",
+            "initial-rate=unknown",
+            "initial-rate-bps=+1",
+            "initial-rate-kbps=2",
+            "initial-rate-mbps=3",
         )
 
         variants.forEach { variant ->
-            val uri = "tcp://edge.example:443?backup&$variant&probe-only"
+            val uri = "tcp://edge.example:443?backup=true&$variant&control-only=true"
             assertEquals(
-                "tcp://edge.example:443?backup&rate-mbps=42&probe-only",
-                MppEndpointUriEditor.withRateOption(uri, "rate-mbps", "42"),
+                "tcp://edge.example:443?backup=true&initial-rate-mbps=42&control-only=true",
+                MppEndpointUriEditor.withRateOption(uri, "initial-rate-mbps", "42"),
             )
             assertEquals(
-                "tcp://edge.example:443?backup&probe-only",
+                "tcp://edge.example:443?backup=true&control-only=true",
                 MppEndpointUriEditor.withRateOption(uri, null, null),
             )
         }
 
-        val withoutRate = "udp://edge.example:443?backup"
+        val withoutRate = "quic://edge.example:443?backup=true"
         assertEquals(
-            "$withoutRate&rate=unlimited",
-            MppEndpointUriEditor.withRateOption(withoutRate, "rate", "unlimited"),
+            "$withoutRate&initial-rate=unlimited",
+            MppEndpointUriEditor.withRateOption(
+                withoutRate,
+                "initial-rate",
+                "unlimited",
+            ),
         )
     }
 
     @Test
     fun hostAndPortEditsBracketIpv6AndMayExposeInvalidTargetText() {
-        val uri = "udp://[2001:db8::1]:00443-00444?rate=unlimited"
+        val uri = "quic://[2001:db8::1]:443-444?initial-rate=unlimited"
         val parsed = MppEndpointUriEditor.parse(uri)!!
 
         assertEquals("2001:db8::1", parsed.host)
-        assertEquals("00443-00444", parsed.ports)
+        assertEquals("443-444", parsed.ports)
         assertEquals(
-            "udp://[2001:db8::2]:00443-00444?rate=unlimited",
+            "quic://[2001:db8::2]:443-444?initial-rate=unlimited",
             MppEndpointUriEditor.withHost(uri, "2001:db8::2"),
         )
         assertEquals(
-            "udp://[2001:db8::1]:5000-6000?rate=unlimited",
+            "quic://[2001:db8::1]:5000-6000?initial-rate=unlimited",
             MppEndpointUriEditor.withPorts(uri, "5000-6000"),
         )
 
         val invalidTarget = MppEndpointUriEditor.withPorts(uri, "6000-5000")
-        assertEquals("udp://[2001:db8::1]:6000-5000?rate=unlimited", invalidTarget)
+        assertEquals(
+            "quic://[2001:db8::1]:6000-5000?initial-rate=unlimited",
+            invalidTarget,
+        )
         assertNull(MppPathParser.parse(invalidTarget!!))
     }
 
     @Test
-    fun everyRewriteReturnsNullForInvalidSourceSoCallerCanKeepIt() {
-        val invalid = "tcp://edge.example:0?backup"
+    fun everyRewriteReturnsNullForInvalidOrPreviousGrammarSource() {
+        val invalid = "tcp://edge.example:0?backup=true"
 
         assertNull(MppEndpointUriEditor.parse(invalid))
-        assertNull(MppEndpointUriEditor.withUnderlay(invalid, MppPathUnderlay.UDP))
+        assertNull(MppEndpointUriEditor.withUnderlay(invalid, MppPathUnderlay.QUIC))
         assertNull(MppEndpointUriEditor.withHost(invalid, "other.example"))
         assertNull(MppEndpointUriEditor.withPorts(invalid, "443"))
-        assertNull(MppEndpointUriEditor.withScalarOption(invalid, "srtt-ms", "10"))
+        assertNull(MppEndpointUriEditor.withScalarOption(invalid, "initial-srtt-ms", "10"))
         assertNull(MppEndpointUriEditor.withBooleanOption(invalid, "backup", true))
-        assertNull(MppEndpointUriEditor.withRateOption(invalid, "rate-mbps", "10"))
-        assertEquals(
-            invalid,
-            MppEndpointUriEditor.withHost(invalid, "other.example") ?: invalid,
-        )
+        assertNull(MppEndpointUriEditor.withRateOption(invalid, "initial-rate-mbps", "10"))
+
+        val previous = "udp://edge.example:443?backup=true"
+        assertNull(MppEndpointUriEditor.parse(previous))
+        assertNull(MppEndpointUriEditor.parseDraft(previous))
+        assertNull(MppEndpointUriEditor.withHost(previous, "other.example"))
     }
 
     @Test
     fun optedInDraftSourceAllowsIncrementalRangeAndScalarTyping() {
-        val validPort = "tcp://edge.example:7443?backup"
+        val validPort = "tcp://edge.example:7443?backup=true"
         val partialRange = MppEndpointUriEditor.withPorts(validPort, "7443-")!!
-        assertEquals("tcp://edge.example:7443-?backup", partialRange)
+        assertEquals("tcp://edge.example:7443-?backup=true", partialRange)
         assertNull(MppPathParser.parse(partialRange))
         assertNull(MppEndpointUriEditor.withPorts(partialRange, "7443-75"))
 
@@ -166,7 +225,7 @@ class MppEndpointUriEditorTest {
             "7443-75",
             allowDraftSource = true,
         )!!
-        assertEquals("tcp://edge.example:7443-75?backup", continuedRange)
+        assertEquals("tcp://edge.example:7443-75?backup=true", continuedRange)
         assertNull(MppPathParser.parse(continuedRange))
 
         val finishedRange = MppEndpointUriEditor.withPorts(
@@ -174,33 +233,42 @@ class MppEndpointUriEditorTest {
             "7443-7543",
             allowDraftSource = true,
         )!!
-        assertEquals("tcp://edge.example:7443-7543?backup", finishedRange)
+        assertEquals("tcp://edge.example:7443-7543?backup=true", finishedRange)
         assertEquals("7443-7543", MppEndpointUriEditor.parse(finishedRange)!!.ports)
 
-        val partialIp = MppEndpointUriEditor.withScalarOption(
+        val partialAddress = MppEndpointUriEditor.withScalarOption(
             validPort,
-            "source-ip",
+            "source-address",
             "1",
         )!!
-        assertEquals("tcp://edge.example:7443?backup&source-ip=1", partialIp)
-        assertNull(MppPathParser.parse(partialIp))
+        assertEquals("tcp://edge.example:7443?backup=true&source-address=1", partialAddress)
+        assertNull(MppPathParser.parse(partialAddress))
 
-        val continuedIp = MppEndpointUriEditor.withScalarOption(
-            partialIp,
-            "source-ip",
+        val continuedAddress = MppEndpointUriEditor.withScalarOption(
+            partialAddress,
+            "source-address",
             "192.",
             allowDraftSource = true,
         )!!
-        assertEquals("tcp://edge.example:7443?backup&source-ip=192.", continuedIp)
-        assertNull(MppPathParser.parse(continuedIp))
+        assertEquals(
+            "tcp://edge.example:7443?backup=true&source-address=192.",
+            continuedAddress,
+        )
+        assertNull(MppPathParser.parse(continuedAddress))
 
-        val finishedIp = MppEndpointUriEditor.withScalarOption(
-            continuedIp,
-            "source-ip",
+        val finishedAddress = MppEndpointUriEditor.withScalarOption(
+            continuedAddress,
+            "source-address",
             "192.0.2.1",
             allowDraftSource = true,
         )!!
-        assertEquals("tcp://edge.example:7443?backup&source-ip=192.0.2.1", finishedIp)
-        assertEquals("192.0.2.1", MppEndpointUriEditor.parse(finishedIp)!!.options.last().value)
+        assertEquals(
+            "tcp://edge.example:7443?backup=true&source-address=192.0.2.1",
+            finishedAddress,
+        )
+        assertEquals(
+            "192.0.2.1",
+            MppEndpointUriEditor.parse(finishedAddress)!!.options.last().value,
+        )
     }
 }

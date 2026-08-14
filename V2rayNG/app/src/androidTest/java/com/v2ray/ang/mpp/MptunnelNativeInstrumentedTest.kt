@@ -8,6 +8,7 @@ import com.v2ray.ang.enums.EConfigType
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,22 +25,151 @@ class MptunnelNativeInstrumentedTest {
     }
 
     @Test
+    fun legacyRawMigrationPreservesUnknownTomlAndManagedSemantics() {
+        val legacy = """
+            # preserve-this-comment
+            [[credentials]]
+            credential_id = "android-client"
+            principal_id = "android"
+            secret = { from = "file", path = "@mptunnel-profile-credential@" }
+
+            @mptunnel-local-user-definition@
+
+            [[inbounds]]
+            name = "local-mixed"
+            protocol = "mixed"
+            listen = ["127.0.0.1:@mptunnel-socks-port@"]
+            @mptunnel-local-user-binding@
+
+            [[outbounds]]
+            name = "remote-mpp"
+            protocol = "mpp"
+            paths = [{ name = "primary", endpoint = "tcp://127.0.0.1:7443" }]
+
+            [outbounds.security]
+            credential_id = "android-client"
+            tls_pinned_certificate_file = "@mptunnel-profile-certificate@"
+            transport_secret_file = "@mptunnel-profile-transport-secret@"
+
+            [custom_unknown]
+            retained = 42
+        """.trimIndent()
+
+        val migrated = MptunnelNative.migrateEditor(legacy)
+
+        assertTrue(migrated.contains("# preserve-this-comment"))
+        assertTrue(migrated.contains("[custom_unknown]"))
+        assertTrue(migrated.contains("retained = 42"))
+        assertTrue(migrated.contains("from = \"managed\""))
+        assertTrue(migrated.contains("id = \"credential\""))
+        assertTrue(migrated.contains("id = \"pinned-certificate\""))
+        assertTrue(migrated.contains("id = \"transport-secret\""))
+        assertFalse(migrated.contains("_file"))
+        assertFalse(migrated.contains("@mptunnel-profile-"))
+    }
+
+    @Test
+    fun guidedPatchPreservesUnknownTomlAndComments() {
+        val legacy = MppProfileConfig(
+            credentialSecret = "0123456789abcdef0123456789abcdef",
+            pinnedCertificatePem = TEST_CERTIFICATE,
+        )
+        val document = MppConfigRenderer.renderEditableTemplate("127.0.0.1", legacy) +
+                "\n# keep-guided-comment\n[custom_unknown]\nretained = 42\n"
+        val projection = MptunnelNative.projectEditor(document)
+
+        val patched = MptunnelNative.patchEditor(
+            document,
+            projection.copy(credentialId = "patched-client"),
+        )
+
+        assertTrue(patched.contains("# keep-guided-comment"))
+        assertTrue(patched.contains("[custom_unknown]"))
+        assertTrue(patched.contains("retained = 42"))
+        assertEquals(
+            "patched-client",
+            MptunnelNative.projectEditor(patched).credentialId,
+        )
+    }
+
+    @Test
+    fun canonicalEditorValidationRejectsInvalidPreservedNativeField() {
+        val legacy = MppProfileConfig(
+            credentialSecret = "0123456789abcdef0123456789abcdef",
+            pinnedCertificatePem = TEST_CERTIFICATE,
+        )
+        val document = MppConfigRenderer.renderEditableTemplate("127.0.0.1", legacy)
+            .replace("level = \"info\"", "level = 42")
+        val canonical = legacy.copy(
+            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            editorToml = document,
+            credentialSecret = MppMaterialCodec.encodeStored(
+                MppMaterialCodec.encodeUtf8(legacy.credentialSecret)
+            ),
+            pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                MppMaterialCodec.encodeUtf8(legacy.pinnedCertificatePem)
+            ),
+        )
+
+        assertThrows(RuntimeException::class.java) {
+            MptunnelNative.validateEditor(canonical)
+        }
+    }
+
+    @Test
+    fun legacyPrivateMaterialTreeIsRemovedWithoutFollowingLinks() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = context.noBackupFilesDir.resolve("mptunnel")
+        val sentinel = context.noBackupFilesDir.resolve("mptunnel-cleanup-sentinel")
+        root.deleteRecursively()
+        sentinel.deleteRecursively()
+        try {
+            assertTrue(root.resolve("profile/materials").mkdirs())
+            root.resolve("profile/materials/credential").writeBytes(byteArrayOf(1, 2, 3))
+            assertTrue(sentinel.mkdir())
+            sentinel.resolve("keep").writeBytes(byteArrayOf(4, 5, 6))
+            android.system.Os.symlink(
+                sentinel.absolutePath,
+                root.resolve("external-link").absolutePath,
+            )
+
+            MptunnelNative.cleanupLegacyMaterialRoot(context)
+
+            assertFalse(root.exists())
+            assertTrue(sentinel.resolve("keep").exists())
+        } finally {
+            root.deleteRecursively()
+            sentinel.deleteRecursively()
+        }
+    }
+
+    @Test
     fun cdylibStartsMixedListenerAndStops() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val legacyMpp = MppProfileConfig(
+            tcpEnabled = true,
+            tcpPort = 9,
+            tcpCarrierCount = 1,
+            udpEnabled = false,
+            credentialId = "android-client",
+            principalId = "android",
+            credentialSecret = "0123456789abcdef0123456789abcdef",
+            tlsServerName = "mptunnel.example",
+            pinnedCertificatePem = TEST_CERTIFICATE,
+        )
         val profile = ProfileItem(
             configType = EConfigType.MPP,
             remarks = "instrumentation",
             server = "127.0.0.1",
-            mpp = MppProfileConfig(
-                tcpEnabled = true,
-                tcpPort = 9,
-                tcpCarrierCount = 1,
-                udpEnabled = false,
-                credentialId = "android-client",
-                principalId = "android",
-                credentialSecret = "0123456789abcdef0123456789abcdef",
-                tlsServerName = "mptunnel.example",
-                pinnedCertificatePem = TEST_CERTIFICATE,
+            mpp = legacyMpp.copy(
+                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                editorToml = MppConfigRenderer.renderEditableTemplate("127.0.0.1", legacyMpp),
+                credentialSecret = MppMaterialCodec.encodeStored(
+                    MppMaterialCodec.encodeUtf8(legacyMpp.credentialSecret)
+                ),
+                pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                    MppMaterialCodec.encodeUtf8(legacyMpp.pinnedCertificatePem)
+                ),
             ),
         )
 
@@ -50,15 +180,13 @@ class MptunnelNativeInstrumentedTest {
             !expectedNativeVersion.isNullOrBlank(),
         )
         assertEquals(expectedNativeVersion, MptunnelNative.version())
-        repeat(5) { generation ->
-            val profileId = "instrumentation-mixed-$generation"
+        repeat(5) {
             val port = ServerSocket(0).use { it.localPort }
             val proxyUsername = "local"
             val proxyPassword = "instrumentation-secret"
             assertTrue(
                 MptunnelNative.start(
                     context = context,
-                    profileId = profileId,
                     profile = profile,
                     socksPort = port,
                     proxyUsername = proxyUsername,
@@ -67,6 +195,8 @@ class MptunnelNativeInstrumentedTest {
                 )
             )
             assertTrue(MptunnelNative.isRunning())
+            assertEquals("ready", MptunnelNative.state())
+            assertEquals(2, MptunnelNative.queryOutboundTrafficStats().size)
 
             Socket().use { socket ->
                 socket.soTimeout = 2_000
@@ -103,8 +233,7 @@ class MptunnelNativeInstrumentedTest {
 
             assertTrue(MptunnelNative.stop())
             assertFalse(MptunnelNative.isRunning())
-            val privateProfile = context.noBackupFilesDir.resolve("mptunnel/$profileId")
-            assertFalse(privateProfile.exists())
+            assertFalse(context.noBackupFilesDir.resolve("mptunnel").exists())
         }
     }
 
