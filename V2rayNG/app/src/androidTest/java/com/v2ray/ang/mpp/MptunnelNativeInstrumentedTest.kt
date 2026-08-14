@@ -69,6 +69,39 @@ class MptunnelNativeInstrumentedTest {
     }
 
     @Test
+    fun releasedMpp4RouteMigratesAndValidatesWithoutManualEditing() {
+        val legacy = MppProfileConfig(
+            credentialSecret = "0123456789abcdef0123456789abcdef",
+            pinnedCertificatePem = TEST_CERTIFICATE,
+        )
+        val releasedDocument = MppConfigRenderer
+            .renderEditableTemplate("127.0.0.1", legacy)
+            .replace(
+                "name = \"default\"\noutbound = \"remote-mpp\"",
+                "name = \"default\"\naction = \"outbound\" # keep-release-comment\n" +
+                        "outbound = \"remote-mpp\"",
+            )
+        assertTrue(releasedDocument.contains("action = \"outbound\""))
+
+        val migrated = MptunnelNative.migrateEditor(releasedDocument)
+        assertFalse(migrated.contains("action ="))
+        assertTrue(migrated.contains("decision = \"allow\" # keep-release-comment"))
+        assertEquals(migrated, MptunnelNative.migrateEditor(migrated))
+
+        val canonical = legacy.copy(
+            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            editorToml = releasedDocument,
+            credentialSecret = MppMaterialCodec.encodeStored(
+                MppMaterialCodec.encodeUtf8(legacy.credentialSecret)
+            ),
+            pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                MppMaterialCodec.encodeUtf8(legacy.pinnedCertificatePem)
+            ),
+        )
+        MptunnelNative.validateEditor(canonical)
+    }
+
+    @Test
     fun guidedPatchPreservesUnknownTomlAndComments() {
         val legacy = MppProfileConfig(
             credentialSecret = "0123456789abcdef0123456789abcdef",

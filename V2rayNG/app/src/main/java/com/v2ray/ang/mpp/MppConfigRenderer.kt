@@ -115,7 +115,6 @@ object MppConfigRenderer {
             appendLine()
             appendLine("[[routing.rules]]")
             appendLine("name = \"default\"")
-            appendLine("action = \"outbound\"")
             appendLine("outbound = \"remote-mpp\"")
         }
     }

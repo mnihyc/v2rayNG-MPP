@@ -188,6 +188,7 @@ for abi in arm64-v8a x86_64; do
     "$package_root/README.md" \
     "$package_root/examples/" \
     "$package_root/examples/client.toml" \
+    "$package_root/examples/config.reference.toml" \
     "$package_root/examples/server.toml" \
     "$package_root/$abi/" \
     "$package_root/$abi/libmptunnel.so" \
@@ -204,7 +205,12 @@ for abi in arm64-v8a x86_64; do
     echo "$archive_name contains a symbolic link" >&2
     exit 1
   fi
-  for relative in README.md examples/client.toml examples/server.toml mptunnel "$abi/libmptunnel.so"; do
+  for relative in README.md \
+    examples/client.toml \
+    examples/config.reference.toml \
+    examples/server.toml \
+    mptunnel \
+    "$abi/libmptunnel.so"; do
     [[ -f "$extract_root/$package_root/$relative" && ! -L "$extract_root/$package_root/$relative" ]] || {
       echo "$archive_name member is not a regular file: $relative" >&2
       exit 1

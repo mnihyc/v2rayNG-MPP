@@ -31,6 +31,10 @@ signing.properties
 # Ignore shared object files
 *.so
 
+# Ignore generated native-library build and app-staging trees
+/libs/
+/V2rayNG/app/libs/
+
 # Ignore Google services JSON
 V2rayNG/app/google-services.json
 

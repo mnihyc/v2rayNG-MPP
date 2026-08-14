@@ -1309,14 +1309,19 @@ class ServerMppActivity : BaseServerActivity() {
         if (original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
             original.useRawToml && original.editorToml.isNotBlank()
         ) {
-            // Raw mode owns this already-canonical document. Projection is deferred until the
-            // user explicitly switches to guided mode so opening it cannot normalize unknowns.
+            // Native migration is syntax-preserving and upgrades only known, bijective editor
+            // forms. Raw mode still owns the resulting document: projection remains deferred
+            // until the user explicitly switches to guided mode, so unknowns are not normalized.
+            state.mppConfig = original.copy(
+                editorToml = MptunnelNative.migrateEditor(original.editorToml),
+            )
             return
         }
         var projectedConfig = original
         val existingDocument = when {
             original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
-                    original.editorToml.isNotBlank() -> original.editorToml
+                    original.editorToml.isNotBlank() ->
+                MptunnelNative.migrateEditor(original.editorToml)
             original.useRawToml && original.rawToml.isNotBlank() -> original.rawToml
             else -> {
                 val seedHost = state.address.ifBlank { DEFAULT_NEW_PROFILE_HOST }

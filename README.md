@@ -89,8 +89,9 @@ A new guided profile renders the canonical DNS schema: `[dns]` selects its
 ordered strategy, answer CIDRs, query limits, and cache limits are grouped in
 the policy. If `[dns]` is omitted, MPTUNNEL synthesizes the OS `system` server
 and `default` policy. Advanced raw TOML can replace or extend that single
-authoritative document with other native DNS servers, policies, rules, records,
-or override pools.
+authoritative document with other native DNS servers, policies, selection
+rules, and named override-record or synthetic-capture definitions attached to
+the intended policies with `override_records` or `synthetic_capture`.
 
 ## Release integrity
 

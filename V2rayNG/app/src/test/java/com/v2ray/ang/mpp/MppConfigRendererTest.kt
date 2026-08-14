@@ -39,6 +39,8 @@ class MppConfigRendererTest {
         assertFalse(template.contains(config.pinnedCertificatePem))
         assertFalse(template.contains(config.transportSecret))
         assertFalse(template.contains("_file"))
+        assertTrue(template.contains("outbound = \"remote-mpp\""))
+        assertFalse(template.contains("action ="))
     }
 
     @Test
