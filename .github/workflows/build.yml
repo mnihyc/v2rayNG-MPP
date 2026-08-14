@@ -122,24 +122,13 @@ jobs:
             -PABI_FILTERS=x86_64 \
             -PUNIVERSAL_APK=false
 
+      - name: Test emulator health gate
+        run: .github/scripts/run-mptunnel-instrumentation.sh --self-test
+
       - name: Run x86_64 MPTUNNEL instrumentation
-        uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
-        with:
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: true
-          emulator-options: >-
-            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-            -camera-back none -camera-front none
-          script: >-
-            cd V2rayNG &&
-            ./gradlew connectedFdroidDebugAndroidTest
-            -PABI_FILTERS=x86_64
-            -PUNIVERSAL_APK=false
-            -Pandroid.testInstrumentationRunnerArguments.class=com.v2ray.ang.mpp.MptunnelNativeInstrumentedTest
-            -Pandroid.testInstrumentationRunnerArguments.mptunnelNativeVersion=${{ steps.mptunnel.outputs.version }}
+        env:
+          MPTUNNEL_VERSION: ${{ steps.mptunnel.outputs.version }}
+        run: .github/scripts/run-mptunnel-instrumentation.sh "$MPTUNNEL_VERSION"
 
       - name: Verify branch universal APK native ABI inventory
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
