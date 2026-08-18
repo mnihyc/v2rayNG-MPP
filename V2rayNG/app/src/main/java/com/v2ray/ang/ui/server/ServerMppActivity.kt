@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
@@ -60,6 +62,7 @@ import com.v2ray.ang.mpp.MppProfileValidator
 import com.v2ray.ang.mpp.MppValidationError
 import com.v2ray.ang.mpp.MptunnelNative
 import com.v2ray.ang.ui.compose.FormTextField
+import com.v2ray.ang.ui.compose.LocalDarkTheme
 import com.v2ray.ang.ui.compose.ManagedContentField
 import com.v2ray.ang.ui.compose.SettingsListItem
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
@@ -212,6 +215,10 @@ class ServerMppActivity : BaseServerActivity() {
         )
 
         if (config.useRawToml) {
+            AdvancedCustomConfigWarning()
+        }
+
+        if (config.useRawToml) {
             ManagedContentField(
                 label = stringResource(R.string.server_mpp_raw_toml),
                 value = config.editorToml,
@@ -305,6 +312,23 @@ class ServerMppActivity : BaseServerActivity() {
             }
         }
         HelpText(stringResource(R.string.server_mpp_transport_secret_hint))
+    }
+
+    @Composable
+    private fun AdvancedCustomConfigWarning() {
+        val dark = LocalDarkTheme.current
+        Surface(
+            color = if (dark) Color(0xFF594A00) else Color(0xFFFFF3C4),
+            contentColor = if (dark) Color(0xFFFFE082) else Color(0xFF4E3500),
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.server_mpp_advanced_custom_warning),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        }
     }
 
     @Composable
@@ -1311,29 +1335,32 @@ class ServerMppActivity : BaseServerActivity() {
         if (original.editorSchemaVersion != MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
             original.useRawToml && original.rawToml.isNotBlank()
         ) {
-            state.mppConfig = original.copy(
-                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
-                editorToml = MptunnelNative.migrateEditor(original.rawToml),
-                rawToml = "",
-            )
+            val migrated = state.migrateMppEditorOrKeepRaw(
+                original.rawToml,
+                MptunnelNative::migrateEditor,
+            ) ?: return
+            state.keepMppCustomTomlAsRawAuthority(migrated)
             return
         }
         if (original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
             original.useRawToml && original.editorToml.isNotBlank()
         ) {
-            // Native migration is syntax-preserving and upgrades only known, bijective editor
-            // forms. Raw mode still owns the resulting document: projection remains deferred
-            // until the user explicitly switches to guided mode, so unknowns are not normalized.
-            state.mppConfig = original.copy(
-                editorToml = MptunnelNative.migrateEditor(original.editorToml),
-            )
+            // Persist known, bijective upgrades required by released editor documents. Current
+            // custom TOML remains byte-identical because migration is idempotent for v0.4 forms.
+            val migrated = state.migrateMppEditorOrKeepRaw(
+                original.editorToml,
+                MptunnelNative::migrateEditor,
+            ) ?: return
+            state.keepMppCustomTomlAsRawAuthority(migrated)
             return
         }
         var projectedConfig = original
         val existingDocument = when {
             original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
-                    original.editorToml.isNotBlank() ->
-                MptunnelNative.migrateEditor(original.editorToml)
+                    original.editorToml.isNotBlank() -> state.migrateMppEditorOrKeepRaw(
+                original.editorToml,
+                MptunnelNative::migrateEditor,
+            ) ?: return
             original.useRawToml && original.rawToml.isNotBlank() -> original.rawToml
             else -> {
                 val seedHost = state.address.ifBlank { DEFAULT_NEW_PROFILE_HOST }
@@ -1342,8 +1369,28 @@ class ServerMppActivity : BaseServerActivity() {
                 MppConfigRenderer.renderEditableTemplate(seedHost, projectedConfig)
             }
         }
-        val projection = MptunnelNative.projectEditor(existingDocument)
-        val patched = MptunnelNative.patchEditor(existingDocument, projection)
+        val projection = runCatching {
+            MptunnelNative.projectEditor(existingDocument)
+        }.getOrElse {
+            if (original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+                original.editorToml.isNotBlank()
+            ) {
+                state.keepMppCustomTomlAsRawAuthority(existingDocument)
+                return
+            }
+            throw it
+        }
+        val patched = runCatching {
+            MptunnelNative.patchEditor(existingDocument, projection)
+        }.getOrElse {
+            if (original.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+                original.editorToml.isNotBlank()
+            ) {
+                state.keepMppCustomTomlAsRawAuthority(existingDocument)
+                return
+            }
+            throw it
+        }
         state.mppConfig = projection.applyTo(projectedConfig, patched).copy(
             useRawToml = original.useRawToml,
             rawToml = "",
@@ -1353,8 +1400,24 @@ class ServerMppActivity : BaseServerActivity() {
 
     private fun projectCanonicalEditor(state: ServerUiState) {
         val config = state.mppConfig
-        val projection = MptunnelNative.projectEditor(config.editorToml)
-        val patched = MptunnelNative.patchEditor(config.editorToml, projection)
+        // Retain known, bijective migrations when possible. Any document outside that migration
+        // shape remains authoritative in the full editor and is still validated on Save.
+        val migrated = state.migrateMppEditorOrKeepRaw(
+            config.editorToml,
+            MptunnelNative::migrateEditor,
+        ) ?: return
+        val projection = runCatching {
+            MptunnelNative.projectEditor(migrated)
+        }.getOrElse {
+            state.keepMppCustomTomlAsRawAuthority(migrated)
+            return
+        }
+        val patched = runCatching {
+            MptunnelNative.patchEditor(migrated, projection)
+        }.getOrElse {
+            state.keepMppCustomTomlAsRawAuthority(migrated)
+            return
+        }
         state.mppConfig = projection.applyTo(config, patched).copy(useRawToml = false)
         state.syncFromPaths(projection.paths)
     }

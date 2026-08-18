@@ -58,6 +58,7 @@
     <string name="server_mpp_log_level">MPTUNNEL log level</string>
     <string name="server_mpp_raw_toml">MPP client TOML</string>
     <string name="server_mpp_raw_toml_hint">This is the same authoritative document used by the guided editor. Runtime ports, local authentication, and managed material references are finalized only at start.</string>
+    <string name="server_mpp_advanced_custom_warning">Advanced/full-TOML mode. Some custom settings may not appear in guided controls; the full document remains authoritative. Save still performs full MPTUNNEL validation.</string>
     <string name="server_mpp_paths">Carrier paths</string>
     <string name="server_mpp_paths_hint">Each full endpoint URI is authoritative. Paths may use different hosts, ports or port ranges and can be ordered independently.</string>
     <string name="server_mpp_path_number">Path %1$d</string>

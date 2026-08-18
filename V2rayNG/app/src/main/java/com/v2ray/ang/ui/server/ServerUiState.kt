@@ -131,6 +131,25 @@ class ServerUiState(
     var mppTransportDecodeFailed by mutableStateOf(mppTransportDecodeFailed)
     var mppGuidedDraftInvalid by mutableStateOf(mppGuidedDraftInvalid)
 
+    /** Keep a non-projectable, migrated document authoritative in the full TOML editor. */
+    internal fun keepMppCustomTomlAsRawAuthority(document: String) {
+        mppConfig = mppConfig.copy(
+            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            editorToml = document,
+            useRawToml = true,
+            rawToml = "",
+        )
+    }
+
+    /** A document outside the guided shape remains editable; Save still performs native validation. */
+    internal fun migrateMppEditorOrKeepRaw(
+        document: String,
+        migrate: (String) -> String,
+    ): String? = runCatching { migrate(document) }.getOrElse {
+        keepMppCustomTomlAsRawAuthority(document)
+        null
+    }
+
     fun toProfileItem(initialConfig: ProfileItem): ProfileItem {
         val isVmess = configType == EConfigType.VMESS
         val isVless = configType == EConfigType.VLESS

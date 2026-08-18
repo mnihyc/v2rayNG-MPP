@@ -279,4 +279,42 @@ class MppProfileModelCompatibilityTest {
         val malformedEdit = requireNotNull(restored.toProfileItem(profile).mpp)
         assertEquals(MppValidationError.TRANSPORT_SECRET, MppProfileValidator.validate(malformedEdit))
     }
+
+    @Test
+    fun advancedCustomFallbackPreservesCanonicalTomlAsRawAuthority() {
+        val customToml = """
+            # spacing and comments are authoritative
+            [[outbounds]]
+            name = "first"
+            protocol = "direct"
+
+            [[outbounds]]
+            name = "second"
+            protocol = "mpp"
+        """.trimIndent()
+        val original = ProfileItem(
+            configType = EConfigType.MPP,
+            mpp = MppProfileConfig(
+                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                editorToml = customToml,
+                useRawToml = false,
+            ),
+        )
+        val state = ServerUiState.fromProfileItem(original)
+
+        state.keepMppCustomTomlAsRawAuthority(customToml)
+
+        assertTrue(state.mppConfig.useRawToml)
+        assertEquals(customToml, state.mppConfig.editorToml)
+        assertEquals("", state.mppConfig.rawToml)
+        assertEquals(customToml, state.toProfileItem(original).mpp?.editorToml)
+
+        val missingGuidedFields = "[logging]\nlevel = \"info\"\n"
+        val migrationResult = state.migrateMppEditorOrKeepRaw(missingGuidedFields) {
+            error("guided migration requires managed MPP material owners")
+        }
+        assertEquals(null, migrationResult)
+        assertTrue(state.mppConfig.useRawToml)
+        assertEquals(missingGuidedFields, state.mppConfig.editorToml)
+    }
 }
