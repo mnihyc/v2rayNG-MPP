@@ -1,10 +1,17 @@
 package com.v2ray.ang.mpp
 
+import android.content.Intent
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.MppProfileConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.ui.server.ServerMppActivity
+import com.v2ray.ang.util.LogUtil
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +22,8 @@ import org.junit.runner.RunWith
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class MptunnelNativeInstrumentedTest {
@@ -113,7 +122,10 @@ class MptunnelNativeInstrumentedTest {
 
         val patched = MptunnelNative.patchEditor(
             document,
-            projection.copy(credentialId = "patched-client"),
+            projection.copy(
+                logLevel = "debug",
+                credentialId = "patched-client",
+            ),
         )
 
         assertTrue(patched.contains("# keep-guided-comment"))
@@ -123,6 +135,38 @@ class MptunnelNativeInstrumentedTest {
             "patched-client",
             MptunnelNative.projectEditor(patched).credentialId,
         )
+        assertEquals("debug", MptunnelNative.projectEditor(patched).logLevel)
+        assertTrue(patched.startsWith("[logging]\nlevel = \"debug\"\n"))
+    }
+
+    @Test
+    fun defaultProfileLaunchesThroughOrdinaryEditorUi() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val profile = defaultProfile("ordinary-ui")
+
+        assertEquals(MppProfileConfig.DEFAULT_LOG_LEVEL, profile.mpp?.logLevel)
+        assertEquals(
+            DEFAULT_UI_PROFILE_GUID,
+            MmkvManager.encodeServerConfig(DEFAULT_UI_PROFILE_GUID, profile),
+        )
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, ServerMppActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("guid", DEFAULT_UI_PROFILE_GUID)
+        )
+        instrumentation.waitForIdleSync()
+
+        try {
+            assertTrue(activity is ServerMppActivity)
+            assertOrdinaryLogLevelSelectorVisible(
+                instrumentation = instrumentation,
+                title = instrumentation.targetContext.getString(R.string.server_mpp_log_level),
+                selectedLevel = MppProfileConfig.DEFAULT_LOG_LEVEL,
+            )
+        } finally {
+            activity.finish()
+            MmkvManager.removeServer(DEFAULT_UI_PROFILE_GUID)
+        }
     }
 
     @Test
@@ -177,34 +221,9 @@ class MptunnelNativeInstrumentedTest {
     }
 
     @Test
-    fun cdylibStartsMixedListenerAndStops() {
+    fun defaultProfileCdylibStartsMixedListenerBridgesInfoLogsAndStops() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val legacyMpp = MppProfileConfig(
-            tcpEnabled = true,
-            tcpPort = 9,
-            tcpCarrierCount = 1,
-            udpEnabled = false,
-            credentialId = "android-client",
-            principalId = "android",
-            credentialSecret = "0123456789abcdef0123456789abcdef",
-            tlsServerName = "mptunnel.example",
-            pinnedCertificatePem = TEST_CERTIFICATE,
-        )
-        val profile = ProfileItem(
-            configType = EConfigType.MPP,
-            remarks = "instrumentation",
-            server = "127.0.0.1",
-            mpp = legacyMpp.copy(
-                editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
-                editorToml = MppConfigRenderer.renderEditableTemplate("127.0.0.1", legacyMpp),
-                credentialSecret = MppMaterialCodec.encodeStored(
-                    MppMaterialCodec.encodeUtf8(legacyMpp.credentialSecret)
-                ),
-                pinnedCertificatePem = MppMaterialCodec.encodeStored(
-                    MppMaterialCodec.encodeUtf8(legacyMpp.pinnedCertificatePem)
-                ),
-            ),
-        )
+        val profile = defaultProfile("instrumentation")
 
         val expectedNativeVersion = InstrumentationRegistry.getArguments()
             .getString(EXPECTED_NATIVE_VERSION_ARGUMENT)
@@ -213,23 +232,36 @@ class MptunnelNativeInstrumentedTest {
             !expectedNativeVersion.isNullOrBlank(),
         )
         assertEquals(expectedNativeVersion, MptunnelNative.version())
+        val observedLogs = LinkedBlockingQueue<Pair<String, String>>()
+        val observingLogSink = MptunnelLogSink { level, message ->
+            // Keep the production LogUtil path in this end-to-end callback test.
+            LogUtil.mptunnel(level, message)
+            if (message.contains("inbound.listening")) {
+                observedLogs.offer(level to message)
+            }
+        }
         repeat(5) {
+            observedLogs.clear()
             val port = ServerSocket(0).use { it.localPort }
             val proxyUsername = "local"
             val proxyPassword = "instrumentation-secret"
             assertTrue(
-                MptunnelNative.start(
+                MptunnelNative.startForTest(
                     context = context,
                     profile = profile,
                     socksPort = port,
                     proxyUsername = proxyUsername,
                     proxyPassword = proxyPassword,
                     protector = SocketProtector { true },
+                    nativeLogSink = observingLogSink,
                 )
             )
             assertTrue(MptunnelNative.isRunning())
             assertEquals("ready", MptunnelNative.state())
             assertEquals(2, MptunnelNative.queryOutboundTrafficStats().size)
+            val callbackRecord = observedLogs.poll(2, TimeUnit.SECONDS)
+            assertEquals("info", callbackRecord?.first)
+            assertTrue(callbackRecord?.second?.contains("local-mixed") == true)
 
             Socket().use { socket ->
                 socket.soTimeout = 2_000
@@ -272,6 +304,69 @@ class MptunnelNativeInstrumentedTest {
 
     private companion object {
         const val EXPECTED_NATIVE_VERSION_ARGUMENT = "mptunnelNativeVersion"
+        const val DEFAULT_UI_PROFILE_GUID = "mpp-default-ui-instrumentation"
+
+        fun defaultProfile(remarks: String): ProfileItem {
+            val legacy = MppProfileConfig(
+                credentialSecret = "0123456789abcdef0123456789abcdef",
+                pinnedCertificatePem = TEST_CERTIFICATE,
+            )
+            return ProfileItem(
+                configType = EConfigType.MPP,
+                remarks = remarks,
+                server = "127.0.0.1",
+                mpp = legacy.copy(
+                    editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                    editorToml = MppConfigRenderer.renderEditableTemplate("127.0.0.1", legacy),
+                    credentialSecret = MppMaterialCodec.encodeStored(
+                        MppMaterialCodec.encodeUtf8(legacy.credentialSecret)
+                    ),
+                    pinnedCertificatePem = MppMaterialCodec.encodeStored(
+                        MppMaterialCodec.encodeUtf8(legacy.pinnedCertificatePem)
+                    ),
+                ),
+            )
+        }
+
+        fun assertOrdinaryLogLevelSelectorVisible(
+            instrumentation: android.app.Instrumentation,
+            title: String,
+            selectedLevel: String,
+        ) {
+            val deadline = SystemClock.uptimeMillis() + 5_000L
+            var visibleTexts = emptySet<String>()
+            while (SystemClock.uptimeMillis() < deadline) {
+                val root = instrumentation.uiAutomation.rootInActiveWindow
+                if (root != null) {
+                    visibleTexts = accessibilityTexts(root)
+                    val mergedRowVisible = visibleTexts.any { text ->
+                        text.contains(title) && text.contains(selectedLevel)
+                    }
+                    val splitRowVisible = visibleTexts.any { it.contains(title) } &&
+                            visibleTexts.any { it == selectedLevel }
+                    if (mergedRowVisible || splitRowVisible) return
+                }
+                SystemClock.sleep(100L)
+            }
+            throw AssertionError(
+                "ordinary MPP editor did not expose $title=$selectedLevel; visible=$visibleTexts"
+            )
+        }
+
+        fun accessibilityTexts(root: AccessibilityNodeInfo): Set<String> {
+            val texts = linkedSetOf<String>()
+            val pending = ArrayDeque<AccessibilityNodeInfo>()
+            pending.add(root)
+            while (pending.isNotEmpty()) {
+                val node = pending.removeFirst()
+                node.text?.toString()?.takeIf(String::isNotBlank)?.let(texts::add)
+                node.contentDescription?.toString()?.takeIf(String::isNotBlank)?.let(texts::add)
+                repeat(node.childCount) { index ->
+                    node.getChild(index)?.let(pending::add)
+                }
+            }
+            return texts
+        }
 
         val TEST_CERTIFICATE = """
             -----BEGIN CERTIFICATE-----

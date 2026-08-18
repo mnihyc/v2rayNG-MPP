@@ -5,6 +5,7 @@ import com.v2ray.ang.dto.entities.MppProfileConfig
 import java.util.UUID
 
 enum class MppValidationError {
+    LOG_LEVEL,
     PATH_REQUIRED,
     PATH_COUNT,
     PATH_NAME,
@@ -36,6 +37,9 @@ object MppProfileValidator {
             if (config.useRawToml) return validateCanonicalMaterials(config)
         } else if (config.useRawToml) {
             return validateLegacyRaw(config)
+        }
+        if (config.logLevel !in MppProfileConfig.SUPPORTED_LOG_LEVELS) {
+            return MppValidationError.LOG_LEVEL
         }
         validatePaths(config)?.let { return it }
         if (!isValidAdvancedTuning(config.advanced)) {

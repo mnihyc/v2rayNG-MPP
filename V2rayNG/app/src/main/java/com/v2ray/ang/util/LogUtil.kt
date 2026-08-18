@@ -55,6 +55,10 @@ object LogUtil {
     private fun log(priority: Int, tag: String, message: String, throwable: Throwable? = null) {
         if (!isEnabled(priority)) return
 
+        write(priority, tag, message, throwable)
+    }
+
+    private fun write(priority: Int, tag: String, message: String, throwable: Throwable? = null) {
         when {
             throwable == null -> Log.println(priority, tag, message)
             priority >= Log.ERROR -> Log.e(tag, message, throwable)
@@ -63,6 +67,25 @@ object LogUtil {
             priority == Log.DEBUG -> Log.d(tag, message, throwable)
             else -> Log.v(tag, message, throwable)
         }
+    }
+
+    /**
+     * Publishes a record already filtered and redacted by MPTUNNEL.
+     *
+     * MPTUNNEL's per-profile level is authoritative, so the unrelated Xray threshold must not
+     * silently filter the same record a second time. The fixed app tag keeps these records in the
+     * existing in-app Logcat view.
+     */
+    fun mptunnel(level: String, message: String) {
+        write(mptunnelPriority(level), AppConfig.TAG, message)
+    }
+
+    internal fun mptunnelPriority(level: String): Int = when (level) {
+        "error" -> Log.ERROR
+        "warn" -> Log.WARN
+        "info" -> Log.INFO
+        "debug" -> Log.DEBUG
+        else -> Log.WARN
     }
 
     fun d(tag: String = AppConfig.TAG, message: String) = log(Log.DEBUG, tag, message)
@@ -75,4 +98,3 @@ object LogUtil {
     fun w(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.WARN, tag, message, throwable)
     fun e(tag: String = AppConfig.TAG, message: String, throwable: Throwable) = log(Log.ERROR, tag, message, throwable)
 }
-

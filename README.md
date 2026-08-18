@@ -37,7 +37,9 @@ supports:
   import; pinned certificates remain exact PEM text;
 - padded standard Base64 persistence for those three managed values. Base64 is
   reversible encoding, not encryption, so profile backups remain sensitive;
-  and
+- a per-profile MPTUNNEL log level, defaulting to `info`, whose native,
+  redacted records are delivered through the app logger and appear in the
+  in-app Logcat view (`debug` adds correlated connection routing details); and
 - one syntax-preserving TOML document shared by the guided and raw views. Raw
   edits retain comments and unknown native settings, while app-managed
   placeholders are replaced by inline Base64 references only when MPTUNNEL

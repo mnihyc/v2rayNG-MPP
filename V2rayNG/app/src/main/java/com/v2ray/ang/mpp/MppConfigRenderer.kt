@@ -25,7 +25,7 @@ object MppConfigRenderer {
 
         return buildString {
             appendLine("[logging]")
-            appendLine("level = \"info\"")
+            appendLine("level = ${tomlString(config.logLevel)}")
             appendLine()
             appendLine("[[credentials]]")
             appendLine("credential_id = ${tomlString(config.credentialId)}")

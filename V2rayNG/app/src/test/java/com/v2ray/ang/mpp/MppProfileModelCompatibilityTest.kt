@@ -38,6 +38,7 @@ class MppProfileModelCompatibilityTest {
         val config = requireNotNull(profile.mpp)
 
         assertNull(config.paths)
+        assertEquals(MppProfileConfig.DEFAULT_LOG_LEVEL, config.logLevel)
         assertEquals(
             listOf(
                 MppPathConfig(
@@ -51,6 +52,24 @@ class MppProfileModelCompatibilityTest {
             ),
             config.effectivePaths(profile.server.orEmpty()),
         )
+    }
+
+    @Test
+    fun loggingLevelRoundTripsThroughProfileAndUiState() {
+        val original = ProfileItem(
+            configType = EConfigType.MPP,
+            server = "edge.example",
+            mpp = MppProfileConfig(logLevel = "debug"),
+        )
+
+        val restored = requireNotNull(
+            JsonUtil.fromJsonSafe(JsonUtil.toJson(original), ProfileItem::class.java)
+        )
+        val state = ServerUiState.fromProfileItem(restored)
+
+        assertEquals("debug", restored.mpp?.logLevel)
+        assertEquals("debug", state.mppConfig.logLevel)
+        assertEquals("debug", state.toProfileItem(restored).mpp?.logLevel)
     }
 
     @Test

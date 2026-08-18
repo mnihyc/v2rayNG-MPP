@@ -17,6 +17,11 @@ fun interface SocketProtector {
     fun protect(fd: Int): Boolean
 }
 
+/** Host callback used by Rust to publish one already-rendered, redacted MPTUNNEL record. */
+fun interface MptunnelLogSink {
+    fun log(level: String, message: String)
+}
+
 /**
  * Small Kotlin boundary around the embedded MPTUNNEL cdylib.
  *
@@ -38,10 +43,13 @@ object MptunnelNative {
     private var lastFromPeerBytes = 0L
     private var legacyMaterialCleanupComplete = false
 
+    private val logSink = MptunnelLogSink(LogUtil::mptunnel)
+
     @JvmStatic
     private external fun nativeStart(
         configToml: String,
         protector: SocketProtector,
+        logSink: MptunnelLogSink,
         readyTimeoutMs: Long,
     ): Boolean
 
@@ -80,6 +88,44 @@ object MptunnelNative {
         proxyUsername: String?,
         proxyPassword: String?,
         protector: SocketProtector,
+    ): Boolean = startWithLogSink(
+        context = context,
+        profile = profile,
+        socksPort = socksPort,
+        proxyUsername = proxyUsername,
+        proxyPassword = proxyPassword,
+        protector = protector,
+        nativeLogSink = logSink,
+    )
+
+    /** Instrumentation boundary for verifying the real JNI callback and callback lifecycle. */
+    @Synchronized
+    internal fun startForTest(
+        context: Context,
+        profile: ProfileItem,
+        socksPort: Int,
+        proxyUsername: String?,
+        proxyPassword: String?,
+        protector: SocketProtector,
+        nativeLogSink: MptunnelLogSink,
+    ): Boolean = startWithLogSink(
+        context = context,
+        profile = profile,
+        socksPort = socksPort,
+        proxyUsername = proxyUsername,
+        proxyPassword = proxyPassword,
+        protector = protector,
+        nativeLogSink = nativeLogSink,
+    )
+
+    private fun startWithLogSink(
+        context: Context,
+        profile: ProfileItem,
+        socksPort: Int,
+        proxyUsername: String?,
+        proxyPassword: String?,
+        protector: SocketProtector,
+        nativeLogSink: MptunnelLogSink,
     ): Boolean {
         if (!legacyMaterialCleanupComplete) {
             cleanupLegacyMaterialRoot(context)
@@ -115,6 +161,7 @@ object MptunnelNative {
             nativeStart(
                 configToml,
                 protector,
+                nativeLogSink,
                 START_TIMEOUT_MS,
             )
         } catch (failure: Throwable) {

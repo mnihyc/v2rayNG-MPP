@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
@@ -60,6 +61,7 @@ import com.v2ray.ang.mpp.MppValidationError
 import com.v2ray.ang.mpp.MptunnelNative
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.ManagedContentField
+import com.v2ray.ang.ui.compose.SettingsListItem
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 import com.v2ray.ang.util.Utils
 import java.io.ByteArrayOutputStream
@@ -160,6 +162,7 @@ class ServerMppActivity : BaseServerActivity() {
         if (error == null) return true
         toast(
             when (error) {
+                MppValidationError.LOG_LEVEL -> R.string.server_mpp_error_log_level
                 MppValidationError.PATH_REQUIRED -> R.string.server_mpp_error_path_required
                 MppValidationError.PATH_COUNT -> R.string.server_mpp_error_path_count
                 MppValidationError.PATH_NAME -> R.string.server_mpp_error_path_name
@@ -307,6 +310,15 @@ class ServerMppActivity : BaseServerActivity() {
     @Composable
     private fun StructuredFields(state: ServerUiState, config: MppProfileConfig) {
         val paths = config.effectivePaths(state.address)
+
+        val logLevels = stringArrayResource(R.array.mpp_loglevel).toList()
+        SettingsListItem(
+            title = stringResource(R.string.server_mpp_log_level),
+            entries = logLevels,
+            values = logLevels,
+            selectedValue = config.logLevel,
+            onSelected = { level -> state.updateMpp { copy(logLevel = level) } },
+        )
 
         Text(
             text = stringResource(R.string.server_mpp_paths),

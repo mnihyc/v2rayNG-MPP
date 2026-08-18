@@ -113,6 +113,14 @@
         <item>none</item>
     </string-array>
 
+    <string-array name="mpp_loglevel" translatable="false">
+        <item>off</item>
+        <item>error</item>
+        <item>warn</item>
+        <item>info</item>
+        <item>debug</item>
+    </string-array>
+
     <string-array name="mode_value" translatable="false">
         <item>VPN</item>
         <item>Proxy only</item>

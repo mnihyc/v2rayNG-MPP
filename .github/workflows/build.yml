@@ -119,6 +119,7 @@ jobs:
             --tests 'com.v2ray.ang.mpp.*' \
             --tests 'com.v2ray.ang.ui.server.Mpp*Test' \
             --tests 'com.v2ray.ang.service.Mpp*Test' \
+            --tests 'com.v2ray.ang.util.LogUtilMptunnelTest' \
             -PABI_FILTERS=x86_64 \
             -PUNIVERSAL_APK=false
 

@@ -55,6 +55,7 @@
     <string name="confirm_delete_asset_source">Are you sure you want to delete this asset source?</string>
     <string name="server_lab_remarks">remarks</string>
     <string name="server_mpp_use_raw_toml">Advanced: full TOML editor</string>
+    <string name="server_mpp_log_level">MPTUNNEL log level</string>
     <string name="server_mpp_raw_toml">MPP client TOML</string>
     <string name="server_mpp_raw_toml_hint">This is the same authoritative document used by the guided editor. Runtime ports, local authentication, and managed material references are finalized only at start.</string>
     <string name="server_mpp_paths">Carrier paths</string>
@@ -130,6 +131,7 @@
     <string name="server_mpp_paste_as_hex">Paste as hex</string>
     <string name="server_mpp_paste_as_text">Paste as UTF-8</string>
     <string name="server_mpp_error_path_required">Add at least one carrier path.</string>
+    <string name="server_mpp_error_log_level">Choose a supported MPTUNNEL log level.</string>
     <string name="server_mpp_error_path_count">A profile can contain at most 64 carrier paths.</string>
     <string name="server_mpp_error_path_name">Path names must be unique and use 1–64 lowercase letters, digits, dots, underscores, or hyphens.</string>
     <string name="server_mpp_error_path_endpoint">Check each endpoint URI. Use tcp:// or quic:// with a host, a canonical port or ascending port range, and only supported explicitly-valued query options.</string>

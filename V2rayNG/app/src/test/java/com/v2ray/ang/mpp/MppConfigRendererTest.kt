@@ -25,6 +25,7 @@ class MppConfigRendererTest {
         val template = MppConfigRenderer.renderEditableTemplate("2001:db8::10", config)
 
         assertEquals(1, Regex("\\[\\[inbounds]]").findAll(template).count())
+        assertTrue(template.startsWith("[logging]\nlevel = \"info\"\n"))
         assertTrue(template.contains("protocol = \"mixed\""))
         assertTrue(template.contains("127.0.0.1:${MppConfigRenderer.SOCKS_PORT_TOKEN}"))
         assertTrue(template.contains("tcp://[2001:db8::10]:7443?max-tcp-carriers=3"))
@@ -41,6 +42,25 @@ class MppConfigRendererTest {
         assertFalse(template.contains("_file"))
         assertTrue(template.contains("outbound = \"remote-mpp\""))
         assertFalse(template.contains("action ="))
+    }
+
+    @Test
+    fun ordinaryLoggingSelectionRendersCanonicalThreshold() {
+        val template = MppConfigRenderer.renderEditableTemplate(
+            "server.example.com",
+            legacyConfig().copy(logLevel = "debug"),
+        )
+
+        assertTrue(template.startsWith("[logging]\nlevel = \"debug\"\n"))
+        assertFalse(template.contains("level = \"info\""))
+    }
+
+    @Test
+    fun guidedProfileRejectsAnUnknownLoggingThreshold() {
+        assertEquals(
+            MppValidationError.LOG_LEVEL,
+            MppProfileValidator.validate(legacyConfig().copy(logLevel = "trace")),
+        )
     }
 
     @Test
@@ -146,6 +166,7 @@ class MppConfigRendererTest {
         val projection = MppEditorProjection.from(legacyConfig(), "server.example.com")
         val json = MppEditorJson.encode(projection)
         assertTrue(json.contains("\"schema_version\":1"))
+        assertTrue(json.contains("\"log_level\":\"info\""))
         assertTrue(json.contains("\"credential_id\":"))
         assertTrue(json.contains("\"tls_server_name\":"))
         assertTrue(json.contains("\"advanced\":null"))

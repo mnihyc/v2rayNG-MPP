@@ -9,6 +9,7 @@ import com.v2ray.ang.dto.entities.MppProfileConfig
 /** Versioned JSON boundary shared with MPTUNNEL's syntax-preserving TOML editor. */
 data class MppEditorProjection(
     @SerializedName("schema_version") val schemaVersion: Int = SCHEMA_VERSION,
+    @SerializedName("log_level") val logLevel: String,
     val paths: List<MppPathConfig>,
     val advanced: Advanced?,
     @SerializedName("credential_id") val credentialId: String,
@@ -56,6 +57,7 @@ data class MppEditorProjection(
     fun applyTo(config: MppProfileConfig, editorToml: String = config.editorToml) = config.copy(
         editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
         editorToml = editorToml,
+        logLevel = logLevel,
         paths = paths,
         advanced = advanced?.toProfileValue(),
         credentialId = credentialId,
@@ -68,6 +70,7 @@ data class MppEditorProjection(
 
         fun from(config: MppProfileConfig, server: String): MppEditorProjection =
             MppEditorProjection(
+                logLevel = config.logLevel,
                 paths = config.effectivePaths(server),
                 advanced = config.advanced?.let(Advanced::from),
                 credentialId = config.credentialId,

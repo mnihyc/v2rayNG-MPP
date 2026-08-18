@@ -20,6 +20,8 @@ data class MppProfileConfig(
     val paths: List<MppPathConfig>? = null,
     /** `null` preserves profiles created before expert native tuning was exposed. */
     val advanced: MppAdvancedConfig? = null,
+    /** Authoritative MPTUNNEL record threshold rendered into `[logging]`. */
+    val logLevel: String = DEFAULT_LOG_LEVEL,
     val tcpEnabled: Boolean = true,
     val tcpPort: Int = DEFAULT_SERVER_PORT,
     val tcpCarrierCount: Int = DEFAULT_TCP_CARRIER_COUNT,
@@ -71,6 +73,7 @@ data class MppProfileConfig(
         "MppProfileConfig(" +
                 "paths=${paths?.size ?: "<legacy>"}, " +
                 "advanced=${advanced ?: "<native-defaults>"}, " +
+                "logLevel=$logLevel, " +
                 "tcpEnabled=$tcpEnabled, tcpPort=$tcpPort, " +
                 "tcpCarrierCount=$tcpCarrierCount, udpEnabled=$udpEnabled, udpPort=$udpPort, " +
                 "credentialId=$credentialId, principalId=$principalId, " +
@@ -85,8 +88,11 @@ data class MppProfileConfig(
         const val DEFAULT_CREDENTIAL_ID = "android-client"
         const val DEFAULT_PRINCIPAL_ID = "android"
         const val DEFAULT_TLS_SERVER_NAME = "mptunnel.example"
+        const val DEFAULT_LOG_LEVEL = "info"
         const val LEGACY_EDITOR_SCHEMA_VERSION = 0
         const val CURRENT_EDITOR_SCHEMA_VERSION = 1
+
+        val SUPPORTED_LOG_LEVELS = listOf("off", "error", "warn", "info", "debug")
 
         private fun endpointHost(server: String): String {
             val host = server.trim().removeSurrounding("[", "]")
