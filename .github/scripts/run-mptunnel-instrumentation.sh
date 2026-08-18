@@ -258,7 +258,7 @@ cleanup_emulator() {
 run_instrumentation() {
   local mptunnel_version="$1"
   local avd_name="mptunnel-api35"
-  local system_image="system-images;android-35;google_apis;x86_64"
+  local system_image="system-images;android-35;default;x86_64"
   local avd_home
   local emulator_log
   local -a emulator_args
@@ -314,12 +314,12 @@ run_instrumentation() {
   mkdir -p "$avd_home"
   export ANDROID_AVD_HOME="$avd_home"
 
-  echo "installing Android API 35 x86_64 Google APIs system image"
+  echo "installing Android API 35 x86_64 AOSP system image"
   sdkmanager --install "$system_image"
   avdmanager create avd --force \
     --name "$avd_name" \
     --package "$system_image" \
-    --abi google_apis/x86_64 \
+    --abi default/x86_64 \
     --device pixel_6 <<<no
   printf 'hw.cpu.ncore=2\n' >> "$avd_home/$avd_name.avd/config.ini"
 
