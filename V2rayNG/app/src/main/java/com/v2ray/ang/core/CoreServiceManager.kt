@@ -1,5 +1,6 @@
 package com.v2ray.ang.core
 
+import android.app.Activity
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -20,6 +21,7 @@ import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.BrowserDialerMode
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
@@ -39,7 +41,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -715,9 +716,20 @@ object CoreServiceManager {
 
                 AppConfig.MSG_STATE_RESTART -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Restart service")
-                    serviceControl.stopService()
-                    Thread.sleep(500L)
-                    LauncherManager.startService(serviceControl.getService())
+                    // The UI and daemon run in separate processes, so acknowledge the active
+                    // daemon before stopping it instead of relying on possibly stale UI state.
+                    if (isOrderedBroadcast) resultCode = Activity.RESULT_OK
+
+                    val pendingResult = goAsync()
+                    CoroutineScope(Dispatchers.Default).launch {
+                        try {
+                            serviceControl.stopService()
+                            delay(500L)
+                            LauncherManager.startService(serviceControl.getService())
+                        } finally {
+                            pendingResult.finish()
+                        }
+                    }
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {
