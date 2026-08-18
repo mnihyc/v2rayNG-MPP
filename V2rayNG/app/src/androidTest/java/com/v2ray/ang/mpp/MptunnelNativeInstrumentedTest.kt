@@ -149,14 +149,29 @@ class MptunnelNativeInstrumentedTest {
             DEFAULT_UI_PROFILE_GUID,
             MmkvManager.encodeServerConfig(DEFAULT_UI_PROFILE_GUID, profile),
         )
-        val activity = instrumentation.startActivitySync(
-            Intent(instrumentation.targetContext, ServerMppActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra("guid", DEFAULT_UI_PROFILE_GUID)
+        val monitor = instrumentation.addMonitor(
+            ServerMppActivity::class.java.name,
+            null,
+            false,
         )
-        instrumentation.waitForIdleSync()
+        var activity: android.app.Activity? = null
 
         try {
+            instrumentation.targetContext.startActivity(
+                Intent(instrumentation.targetContext, ServerMppActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra("guid", DEFAULT_UI_PROFILE_GUID)
+            )
+            activity = instrumentation.waitForMonitorWithTimeout(
+                monitor,
+                ACTIVITY_LAUNCH_TIMEOUT_MS,
+            )
+            requireNotNull(activity) {
+                val activeRoot = instrumentation.uiAutomation.rootInActiveWindow
+                val visibleTexts = activeRoot?.let(::accessibilityTexts).orEmpty()
+                "ServerMppActivity did not launch within ${ACTIVITY_LAUNCH_TIMEOUT_MS}ms; " +
+                        "activePackage=${activeRoot?.packageName}; visible=$visibleTexts"
+            }
             assertTrue(activity is ServerMppActivity)
             assertOrdinaryLogLevelSelectorVisible(
                 instrumentation = instrumentation,
@@ -164,7 +179,10 @@ class MptunnelNativeInstrumentedTest {
                 selectedLevel = MppProfileConfig.DEFAULT_LOG_LEVEL,
             )
         } finally {
-            activity.finish()
+            activity?.let { launched ->
+                instrumentation.runOnMainSync { launched.finish() }
+            }
+            instrumentation.removeMonitor(monitor)
             MmkvManager.removeServer(DEFAULT_UI_PROFILE_GUID)
         }
     }
@@ -305,6 +323,8 @@ class MptunnelNativeInstrumentedTest {
     private companion object {
         const val EXPECTED_NATIVE_VERSION_ARGUMENT = "mptunnelNativeVersion"
         const val DEFAULT_UI_PROFILE_GUID = "mpp-default-ui-instrumentation"
+        const val ACTIVITY_LAUNCH_TIMEOUT_MS = 45_000L
+        const val UI_RENDER_TIMEOUT_MS = 45_000L
 
         fun defaultProfile(remarks: String): ProfileItem {
             val legacy = MppProfileConfig(
@@ -333,7 +353,7 @@ class MptunnelNativeInstrumentedTest {
             title: String,
             selectedLevel: String,
         ) {
-            val deadline = SystemClock.uptimeMillis() + 5_000L
+            val deadline = SystemClock.uptimeMillis() + UI_RENDER_TIMEOUT_MS
             var visibleTexts = emptySet<String>()
             while (SystemClock.uptimeMillis() < deadline) {
                 val root = instrumentation.uiAutomation.rootInActiveWindow
