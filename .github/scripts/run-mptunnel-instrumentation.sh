@@ -345,7 +345,8 @@ run_instrumentation() {
   export EMULATOR_PORT="$port"
   cd "$repository_root/V2rayNG"
 
-  # Keep the healthy device untouched until the instrumentation task starts.
+  # Keep the healthy device untouched until the instrumentation task starts. The full launcher
+  # journey is intentionally local-only; ATD runs only the headless native/JNI contract class.
   ./gradlew connectedFdroidDebugAndroidTest \
     -PABI_FILTERS=x86_64 \
     -PUNIVERSAL_APK=false \
