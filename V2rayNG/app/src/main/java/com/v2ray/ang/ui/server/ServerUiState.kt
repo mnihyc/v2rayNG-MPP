@@ -141,7 +141,7 @@ class ServerUiState(
         )
     }
 
-    /** A document outside the guided shape remains editable; Save still performs native validation. */
+    /** A document outside the guided shape remains editable; Save checks only its TOML syntax. */
     internal fun migrateMppEditorOrKeepRaw(
         document: String,
         migrate: (String) -> String,
@@ -270,6 +270,7 @@ class ServerUiState(
             }
             val resolvedMpp = mpp ?: MppProfileConfig(
                 editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+                targetResolution = MppProfileConfig.TARGET_RESOLUTION_AS_IS,
             )
             val materialDraft = decodeMppMaterialDraft(resolvedMpp)
             return ServerUiState(

@@ -30,7 +30,7 @@ import java.util.regex.Pattern
 class MptunnelLocalUiJourneyInstrumentedTest {
 
     @Test
-    fun defaultProfilePersistsSelectedLogLevelThroughOrdinaryUiJourney() {
+    fun defaultProfilePersistsGuidedSelectionsThroughOrdinaryUiJourney() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
@@ -66,20 +66,35 @@ class MptunnelLocalUiJourneyInstrumentedTest {
                 context.getString(R.string.server_lab_remarks),
                 remarks,
             )
-            assertOrdinaryLogLevelSelectorVisible(
+            assertOrdinarySelectorVisible(
                 device = device,
                 title = context.getString(R.string.server_mpp_log_level),
-                selectedLevel = MppProfileConfig.DEFAULT_LOG_LEVEL,
+                selectedValue = MppProfileConfig.DEFAULT_LOG_LEVEL,
             )
             clickVisibleLabel(
                 device,
                 context.getString(R.string.server_mpp_log_level),
             )
             clickVisibleLabel(device, "debug")
-            assertOrdinaryLogLevelSelectorVisible(
+            assertOrdinarySelectorVisible(
                 device = device,
                 title = context.getString(R.string.server_mpp_log_level),
-                selectedLevel = "debug",
+                selectedValue = "debug",
+            )
+            assertOrdinarySelectorVisible(
+                device = device,
+                title = context.getString(R.string.server_mpp_target_resolution),
+                selectedValue = context.getString(R.string.server_mpp_target_resolution_as_is),
+            )
+            clickVisibleLabel(device, context.getString(R.string.server_mpp_target_resolution))
+            clickVisibleLabel(
+                device,
+                context.getString(R.string.server_mpp_target_resolution_route_only),
+            )
+            assertOrdinarySelectorVisible(
+                device = device,
+                title = context.getString(R.string.server_mpp_target_resolution),
+                selectedValue = context.getString(R.string.server_mpp_target_resolution_route_only),
             )
 
             pasteUtf8MaterialThroughVisibleAction(
@@ -111,10 +126,15 @@ class MptunnelLocalUiJourneyInstrumentedTest {
             )
             clickProfileEdit(device, remarks, context.getString(R.string.acc_edit))
 
-            assertOrdinaryLogLevelSelectorVisible(
+            assertOrdinarySelectorVisible(
                 device = device,
                 title = context.getString(R.string.server_mpp_log_level),
-                selectedLevel = "debug",
+                selectedValue = "debug",
+            )
+            assertOrdinarySelectorVisible(
+                device = device,
+                title = context.getString(R.string.server_mpp_target_resolution),
+                selectedValue = context.getString(R.string.server_mpp_target_resolution_route_only),
             )
         } finally {
             clipboard.clearPrimaryClip()
@@ -131,22 +151,22 @@ class MptunnelLocalUiJourneyInstrumentedTest {
         const val UI_CREDENTIAL_TEXT = "instrumentation-credential-secret"
         const val UI_TRANSPORT_SECRET_TEXT = "0123456789abcdef0123456789abcdef"
 
-        fun assertOrdinaryLogLevelSelectorVisible(
+        fun assertOrdinarySelectorVisible(
             device: UiDevice,
             title: String,
-            selectedLevel: String,
+            selectedValue: String,
         ) {
             val deadline = SystemClock.uptimeMillis() + UI_RENDER_TIMEOUT_MS
             while (SystemClock.uptimeMillis() < deadline) {
                 if (findVisibleLabel(device, title) != null &&
-                    findVisibleLabel(device, selectedLevel) != null
+                    findVisibleLabel(device, selectedValue) != null
                 ) {
                     return
                 }
                 SystemClock.sleep(UI_POLL_INTERVAL_MS)
             }
             throw AssertionError(
-                "ordinary MPP editor did not visibly expose the expected log-level row; " +
+                "ordinary MPP editor did not visibly expose the expected selector row; " +
                         "package=${device.currentPackageName}"
             )
         }

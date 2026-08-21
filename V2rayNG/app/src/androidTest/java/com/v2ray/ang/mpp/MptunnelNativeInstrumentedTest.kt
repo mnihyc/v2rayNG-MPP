@@ -90,6 +90,7 @@ class MptunnelNativeInstrumentedTest {
         val migrated = MptunnelNative.migrateEditor(releasedDocument)
         assertFalse(migrated.contains("action ="))
         assertTrue(migrated.contains("decision = \"allow\" # keep-release-comment"))
+        assertFalse(migrated.contains("target_resolution"))
         assertEquals(migrated, MptunnelNative.migrateEditor(migrated))
 
         val canonical = legacy.copy(
@@ -129,6 +130,7 @@ class MptunnelNativeInstrumentedTest {
             document,
             projection.copy(
                 logLevel = "debug",
+                targetResolution = MppProfileConfig.TARGET_RESOLUTION_ROUTE_ONLY,
                 credentialId = "patched-client",
             ),
         )
@@ -141,7 +143,31 @@ class MptunnelNativeInstrumentedTest {
             MptunnelNative.projectEditor(patched).credentialId,
         )
         assertEquals("debug", MptunnelNative.projectEditor(patched).logLevel)
+        assertEquals(
+            MppProfileConfig.TARGET_RESOLUTION_ROUTE_ONLY,
+            MptunnelNative.projectEditor(patched).targetResolution,
+        )
+        assertTrue(patched.contains("target_resolution = \"route-only\""))
         assertTrue(patched.startsWith("[logging]\nlevel = \"debug\"\n"))
+
+        val compatibility = MptunnelNative.patchEditor(
+            patched,
+            MptunnelNative.projectEditor(patched).copy(targetResolution = null),
+        )
+        assertFalse(compatibility.contains("target_resolution"))
+        assertTrue(compatibility.contains("# keep-guided-comment"))
+        assertTrue(compatibility.contains("retained = 42"))
+
+        // Full-TOML Save must preserve an operator's syntactically valid draft without applying
+        // guided projection or native cross-reference validation.
+        val operatorDraft = """
+            [dns]
+            default = "system"
+        """.trimIndent()
+        MptunnelNative.validateEditorSyntax(operatorDraft)
+        assertThrows(RuntimeException::class.java) {
+            MptunnelNative.validateEditorSyntax("[dns\ndefault = \"system\"")
+        }
     }
 
     @Test
@@ -284,6 +310,7 @@ class MptunnelNativeInstrumentedTest {
             val legacy = MppProfileConfig(
                 credentialSecret = "0123456789abcdef0123456789abcdef",
                 pinnedCertificatePem = TEST_CERTIFICATE,
+                targetResolution = MppProfileConfig.TARGET_RESOLUTION_AS_IS,
             )
             return ProfileItem(
                 configType = EConfigType.MPP,

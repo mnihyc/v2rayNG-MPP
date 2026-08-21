@@ -20,6 +20,7 @@ class MppConfigRendererTest {
             credentialSecret = "credential-material-that-must-not-leak",
             pinnedCertificatePem = "certificate-material-that-must-not-leak",
             transportSecret = "0123456789abcdef0123456789abcdef",
+            targetResolution = MppProfileConfig.TARGET_RESOLUTION_AS_IS,
         )
 
         val template = MppConfigRenderer.renderEditableTemplate("2001:db8::10", config)
@@ -40,6 +41,7 @@ class MppConfigRendererTest {
         assertFalse(template.contains(config.pinnedCertificatePem))
         assertFalse(template.contains(config.transportSecret))
         assertFalse(template.contains("_file"))
+        assertTrue(template.contains("[routing]\ntarget_resolution = \"as-is\""))
         assertTrue(template.contains("outbound = \"remote-mpp\""))
         assertFalse(template.contains("action ="))
     }
@@ -61,6 +63,34 @@ class MppConfigRendererTest {
             MppValidationError.LOG_LEVEL,
             MppProfileValidator.validate(legacyConfig().copy(logLevel = "trace")),
         )
+    }
+
+    @Test
+    fun guidedProfileRejectsAnUnknownTargetResolution() {
+        assertEquals(
+            MppValidationError.TARGET_RESOLUTION,
+            MppProfileValidator.validate(
+                legacyConfig().copy(targetResolution = "automatic")
+            ),
+        )
+    }
+
+    @Test
+    fun targetResolutionRendersOnlyWhenExplicitlySelected() {
+        val compatibility = MppConfigRenderer.renderEditableTemplate(
+            "server.example.com",
+            legacyConfig(),
+        )
+        assertTrue(compatibility.contains("[routing]\n\n[[routing.rules]]"))
+        assertFalse(compatibility.contains("target_resolution"))
+
+        for (mode in MppProfileConfig.SUPPORTED_TARGET_RESOLUTIONS.filterNotNull()) {
+            val explicit = MppConfigRenderer.renderEditableTemplate(
+                "server.example.com",
+                legacyConfig().copy(targetResolution = mode),
+            )
+            assertTrue(explicit.contains("[routing]\ntarget_resolution = \"$mode\""))
+        }
     }
 
     @Test
@@ -167,6 +197,7 @@ class MppConfigRendererTest {
         val json = MppEditorJson.encode(projection)
         assertTrue(json.contains("\"schema_version\":1"))
         assertTrue(json.contains("\"log_level\":\"info\""))
+        assertTrue(json.contains("\"target_resolution\":null"))
         assertTrue(json.contains("\"credential_id\":"))
         assertTrue(json.contains("\"tls_server_name\":"))
         assertTrue(json.contains("\"advanced\":null"))

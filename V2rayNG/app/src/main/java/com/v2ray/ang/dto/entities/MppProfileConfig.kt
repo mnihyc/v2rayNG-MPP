@@ -22,6 +22,8 @@ data class MppProfileConfig(
     val advanced: MppAdvancedConfig? = null,
     /** Authoritative MPTUNNEL record threshold rendered into `[logging]`. */
     val logLevel: String = DEFAULT_LOG_LEVEL,
+    /** Cached projection of `[routing].target_resolution`; null preserves compatibility omission. */
+    val targetResolution: String? = null,
     val tcpEnabled: Boolean = true,
     val tcpPort: Int = DEFAULT_SERVER_PORT,
     val tcpCarrierCount: Int = DEFAULT_TCP_CARRIER_COUNT,
@@ -73,7 +75,7 @@ data class MppProfileConfig(
         "MppProfileConfig(" +
                 "paths=${paths?.size ?: "<legacy>"}, " +
                 "advanced=${advanced ?: "<native-defaults>"}, " +
-                "logLevel=$logLevel, " +
+                "logLevel=$logLevel, targetResolution=${targetResolution ?: "<compatibility>"}, " +
                 "tcpEnabled=$tcpEnabled, tcpPort=$tcpPort, " +
                 "tcpCarrierCount=$tcpCarrierCount, udpEnabled=$udpEnabled, udpPort=$udpPort, " +
                 "credentialId=$credentialId, principalId=$principalId, " +
@@ -89,10 +91,19 @@ data class MppProfileConfig(
         const val DEFAULT_PRINCIPAL_ID = "android"
         const val DEFAULT_TLS_SERVER_NAME = "mptunnel.example"
         const val DEFAULT_LOG_LEVEL = "info"
+        const val TARGET_RESOLUTION_AS_IS = "as-is"
+        const val TARGET_RESOLUTION_ROUTE_ONLY = "route-only"
+        const val TARGET_RESOLUTION_FULL_RESOLVE = "full-resolve"
         const val LEGACY_EDITOR_SCHEMA_VERSION = 0
         const val CURRENT_EDITOR_SCHEMA_VERSION = 1
 
         val SUPPORTED_LOG_LEVELS = listOf("off", "error", "warn", "info", "debug")
+        val SUPPORTED_TARGET_RESOLUTIONS = listOf(
+            null,
+            TARGET_RESOLUTION_AS_IS,
+            TARGET_RESOLUTION_ROUTE_ONLY,
+            TARGET_RESOLUTION_FULL_RESOLVE,
+        )
 
         private fun endpointHost(server: String): String {
             val host = server.trim().removeSurrounding("[", "]")

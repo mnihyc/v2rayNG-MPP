@@ -6,6 +6,7 @@ import java.util.UUID
 
 enum class MppValidationError {
     LOG_LEVEL,
+    TARGET_RESOLUTION,
     PATH_REQUIRED,
     PATH_COUNT,
     PATH_NAME,
@@ -40,6 +41,9 @@ object MppProfileValidator {
         }
         if (config.logLevel !in MppProfileConfig.SUPPORTED_LOG_LEVELS) {
             return MppValidationError.LOG_LEVEL
+        }
+        if (config.targetResolution !in MppProfileConfig.SUPPORTED_TARGET_RESOLUTIONS) {
+            return MppValidationError.TARGET_RESOLUTION
         }
         validatePaths(config)?.let { return it }
         if (!isValidAdvancedTuning(config.advanced)) {

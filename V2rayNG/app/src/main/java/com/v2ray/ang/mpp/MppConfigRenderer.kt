@@ -112,6 +112,12 @@ object MppConfigRenderer {
             )
             appendLine()
             appendLine("[routing]")
+            config.targetResolution?.let { targetResolution ->
+                require(targetResolution in MppProfileConfig.SUPPORTED_TARGET_RESOLUTIONS) {
+                    "unsupported MPP target resolution"
+                }
+                appendLine("target_resolution = ${tomlString(targetResolution)}")
+            }
             appendLine()
             appendLine("[[routing.rules]]")
             appendLine("name = \"default\"")

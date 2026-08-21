@@ -95,6 +95,23 @@ authoritative document with other native DNS servers, policies, selection
 rules, and named override-record or synthetic-capture definitions attached to
 the intended policies with `override_records` or `synthetic_capture`.
 
+### Target resolution
+
+New guided profiles use `as-is`: when the local inbound supplies a hostname,
+MPTUNNEL delegates that hostname unchanged to the server, which independently
+applies the same routing and restricted-address policy. Ordinary Android VPN
+capture often receives a literal IP after the application has already used the
+system resolver; no routing mode can reconstruct that lost hostname. Literal
+IP authorization remains enforced at both client and server boundaries. The
+guided selector can instead use `route-only` for local routing evidence or
+`full-resolve` to send an authorized literal address.
+Profiles whose TOML predates this setting show **Compatibility (unchanged)** and
+retain MPTUNNEL's historical demand-driven behavior until the user selects a
+mode. Guided changes use the native syntax-preserving editor; advanced/custom
+TOML is never regenerated or silently rewritten. Saving advanced TOML checks
+only its syntax; managed Android bindings and complete native configuration
+validation run when the profile starts.
+
 ## Release integrity
 
 Release APKs are built, signed, checked, and published only by

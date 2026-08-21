@@ -10,6 +10,8 @@ import com.v2ray.ang.dto.entities.MppProfileConfig
 data class MppEditorProjection(
     @SerializedName("schema_version") val schemaVersion: Int = SCHEMA_VERSION,
     @SerializedName("log_level") val logLevel: String,
+    /** Null represents compatibility mode; native patching then keeps the optional key omitted. */
+    @SerializedName("target_resolution") val targetResolution: String?,
     val paths: List<MppPathConfig>,
     val advanced: Advanced?,
     @SerializedName("credential_id") val credentialId: String,
@@ -58,6 +60,7 @@ data class MppEditorProjection(
         editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
         editorToml = editorToml,
         logLevel = logLevel,
+        targetResolution = targetResolution,
         paths = paths,
         advanced = advanced?.toProfileValue(),
         credentialId = credentialId,
@@ -71,6 +74,7 @@ data class MppEditorProjection(
         fun from(config: MppProfileConfig, server: String): MppEditorProjection =
             MppEditorProjection(
                 logLevel = config.logLevel,
+                targetResolution = config.targetResolution,
                 paths = config.effectivePaths(server),
                 advanced = config.advanced?.let(Advanced::from),
                 credentialId = config.credentialId,

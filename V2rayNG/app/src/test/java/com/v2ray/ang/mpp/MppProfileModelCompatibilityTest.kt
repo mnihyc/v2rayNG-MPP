@@ -39,6 +39,7 @@ class MppProfileModelCompatibilityTest {
 
         assertNull(config.paths)
         assertEquals(MppProfileConfig.DEFAULT_LOG_LEVEL, config.logLevel)
+        assertNull(config.targetResolution)
         assertEquals(
             listOf(
                 MppPathConfig(
@@ -70,6 +71,41 @@ class MppProfileModelCompatibilityTest {
         assertEquals("debug", restored.mpp?.logLevel)
         assertEquals("debug", state.mppConfig.logLevel)
         assertEquals("debug", state.toProfileItem(restored).mpp?.logLevel)
+    }
+
+    @Test
+    fun targetResolutionRoundTripsWithoutChangingCompatibilityProfiles() {
+        val compatibility = requireNotNull(
+            JsonUtil.fromJsonSafe(
+                """{"configType":"MPP","mpp":{}}""",
+                ProfileItem::class.java,
+            )
+        )
+        assertNull(compatibility.mpp?.targetResolution)
+        assertNull(ServerUiState.fromProfileItem(compatibility).mppConfig.targetResolution)
+
+        val explicit = compatibility.copy(
+            mpp = compatibility.mpp?.copy(
+                targetResolution = MppProfileConfig.TARGET_RESOLUTION_ROUTE_ONLY,
+            )
+        )
+        val restored = requireNotNull(
+            JsonUtil.fromJsonSafe(JsonUtil.toJson(explicit), ProfileItem::class.java)
+        )
+        assertEquals(
+            MppProfileConfig.TARGET_RESOLUTION_ROUTE_ONLY,
+            ServerUiState.fromProfileItem(restored).mppConfig.targetResolution,
+        )
+    }
+
+    @Test
+    fun newMppUiStateDefaultsToAsIs() {
+        val state = ServerUiState.fromProfileItem(ProfileItem.create(EConfigType.MPP))
+
+        assertEquals(
+            MppProfileConfig.TARGET_RESOLUTION_AS_IS,
+            state.mppConfig.targetResolution,
+        )
     }
 
     @Test

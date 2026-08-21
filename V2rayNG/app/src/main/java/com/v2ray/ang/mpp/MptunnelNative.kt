@@ -60,6 +60,9 @@ object MptunnelNative {
     private external fun nativeMigrateEditor(configToml: String): String
 
     @JvmStatic
+    private external fun nativeValidateEditorSyntax(configToml: String): Boolean
+
+    @JvmStatic
     private external fun nativePatchEditor(configToml: String, projectionJson: String): String
 
     @JvmStatic
@@ -192,6 +195,14 @@ object MptunnelNative {
         return nativeMigrateEditor(configToml)
     }
 
+    /** Advanced-editor save gate: size and TOML syntax only, with no guided projection. */
+    fun validateEditorSyntax(configToml: String) {
+        requireLoaded()
+        check(nativeValidateEditorSyntax(configToml)) {
+            "MPTUNNEL rejected the editor document"
+        }
+    }
+
     fun patchEditor(configToml: String, projection: MppEditorProjection): String {
         requireLoaded()
         require(projection.schemaVersion == MppEditorProjection.SCHEMA_VERSION) {
@@ -200,7 +211,7 @@ object MptunnelNative {
         return nativePatchEditor(configToml, MppEditorJson.encode(projection))
     }
 
-    /** Syntax-aware raw-save validation without forcing the document into a guided projection. */
+    /** Full finalization and native-schema validation used by guided Save and runtime startup. */
     fun validateEditor(config: MppProfileConfig) {
         requireLoaded()
         require(config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION)

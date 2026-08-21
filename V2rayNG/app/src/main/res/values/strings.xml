@@ -56,9 +56,14 @@
     <string name="server_lab_remarks">remarks</string>
     <string name="server_mpp_use_raw_toml">Advanced: full TOML editor</string>
     <string name="server_mpp_log_level">MPTUNNEL log level</string>
+    <string name="server_mpp_target_resolution">Target resolution</string>
+    <string name="server_mpp_target_resolution_compatibility">Compatibility (unchanged)</string>
+    <string name="server_mpp_target_resolution_as_is">As-is (remote DNS)</string>
+    <string name="server_mpp_target_resolution_route_only">Route-only (local route DNS)</string>
+    <string name="server_mpp_target_resolution_full_resolve">Full-resolve (send IP)</string>
     <string name="server_mpp_raw_toml">MPP client TOML</string>
     <string name="server_mpp_raw_toml_hint">This is the same authoritative document used by the guided editor. Runtime ports, local authentication, and managed material references are finalized only at start.</string>
-    <string name="server_mpp_advanced_custom_warning">Advanced/full-TOML mode. Some custom settings may not appear in guided controls; the full document remains authoritative. Save still performs full MPTUNNEL validation.</string>
+    <string name="server_mpp_advanced_custom_warning">Advanced/full-TOML mode. The full document is authoritative and Save checks only TOML syntax. Managed Android bindings and native runtime validity are enforced when the profile starts.</string>
     <string name="server_mpp_paths">Carrier paths</string>
     <string name="server_mpp_paths_hint">Each full endpoint URI is authoritative. Paths may use different hosts, ports or port ranges and can be ordered independently.</string>
     <string name="server_mpp_path_number">Path %1$d</string>
@@ -133,6 +138,7 @@
     <string name="server_mpp_paste_as_text">Paste as UTF-8</string>
     <string name="server_mpp_error_path_required">Add at least one carrier path.</string>
     <string name="server_mpp_error_log_level">Choose a supported MPTUNNEL log level.</string>
+    <string name="server_mpp_error_target_resolution">Choose a supported target resolution mode.</string>
     <string name="server_mpp_error_path_count">A profile can contain at most 64 carrier paths.</string>
     <string name="server_mpp_error_path_name">Path names must be unique and use 1–64 lowercase letters, digits, dots, underscores, or hyphens.</string>
     <string name="server_mpp_error_path_endpoint">Check each endpoint URI. Use tcp:// or quic:// with a host, a canonical port or ascending port range, and only supported explicitly-valued query options.</string>
@@ -147,6 +153,7 @@
     <string name="server_mpp_error_certificate">Paste or import exactly one PEM certificate.</string>
     <string name="server_mpp_error_transport_secret">Transport secret must be exactly 32 bytes.</string>
     <string name="server_mpp_error_raw_toml">Enter the full MPP TOML configuration.</string>
+    <string name="server_mpp_error_raw_toml_syntax">The advanced MPP document is not valid TOML.</string>
     <string name="server_mpp_error_raw_credential_token">Raw TOML must contain exactly one app-managed credential token.</string>
     <string name="server_mpp_error_raw_certificate_token">Raw TOML must contain exactly one app-managed certificate token.</string>
     <string name="server_mpp_error_raw_transport_token">Raw TOML transport material must match the optional transport-secret value.</string>

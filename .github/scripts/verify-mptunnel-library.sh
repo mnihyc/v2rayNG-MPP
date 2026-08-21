@@ -58,6 +58,7 @@ printf '%s\n' \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeState \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeStatsJson \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeStop \
+  Java_com_v2ray_ang_mpp_MptunnelNative_nativeValidateEditorSyntax \
   Java_com_v2ray_ang_mpp_MptunnelNative_nativeVersion \
   > "$expected_symbols"
 

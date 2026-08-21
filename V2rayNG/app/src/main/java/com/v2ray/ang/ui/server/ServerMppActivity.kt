@@ -127,6 +127,21 @@ class ServerMppActivity : BaseServerActivity() {
             toast(R.string.server_mpp_error_path_required)
             return false
         }
+        if (mpp.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+            mpp.useRawToml
+        ) {
+            // Full-TOML mode is the operator authority. Save checks only the document boundary;
+            // managed binding and native runtime validation remain strict when the profile starts.
+            return runCatching {
+                MptunnelNative.validateEditorSyntax(mpp.editorToml)
+            }.fold(
+                onSuccess = { true },
+                onFailure = {
+                    toast(R.string.server_mpp_error_raw_toml_syntax)
+                    false
+                },
+            )
+        }
         if (!mpp.useRawToml && activeUiState?.mppGuidedDraftInvalid == true) {
             toast(R.string.server_mpp_error_advanced_tuning)
             return false
@@ -155,8 +170,8 @@ class ServerMppActivity : BaseServerActivity() {
         if (error == null &&
             mpp.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION
         ) {
-            // Guided patching deliberately retains unknown/non-guided TOML, so it needs the same
-            // full native compile validation as raw mode after specific Kotlin errors are handled.
+            // Guided patching deliberately retains unknown/non-guided TOML, so validate the full
+            // native schema after handling the guided model's more specific Kotlin errors.
             runCatching { MptunnelNative.validateEditor(mpp) }.getOrElse {
                 toast(R.string.server_mpp_error_raw_toml)
                 return false
@@ -166,6 +181,8 @@ class ServerMppActivity : BaseServerActivity() {
         toast(
             when (error) {
                 MppValidationError.LOG_LEVEL -> R.string.server_mpp_error_log_level
+                MppValidationError.TARGET_RESOLUTION ->
+                    R.string.server_mpp_error_target_resolution
                 MppValidationError.PATH_REQUIRED -> R.string.server_mpp_error_path_required
                 MppValidationError.PATH_COUNT -> R.string.server_mpp_error_path_count
                 MppValidationError.PATH_NAME -> R.string.server_mpp_error_path_name
@@ -342,6 +359,27 @@ class ServerMppActivity : BaseServerActivity() {
             values = logLevels,
             selectedValue = config.logLevel,
             onSelected = { level -> state.updateMpp { copy(logLevel = level) } },
+        )
+        SettingsListItem(
+            title = stringResource(R.string.server_mpp_target_resolution),
+            entries = listOf(
+                stringResource(R.string.server_mpp_target_resolution_compatibility),
+                stringResource(R.string.server_mpp_target_resolution_as_is),
+                stringResource(R.string.server_mpp_target_resolution_route_only),
+                stringResource(R.string.server_mpp_target_resolution_full_resolve),
+            ),
+            values = listOf(
+                "",
+                MppProfileConfig.TARGET_RESOLUTION_AS_IS,
+                MppProfileConfig.TARGET_RESOLUTION_ROUTE_ONLY,
+                MppProfileConfig.TARGET_RESOLUTION_FULL_RESOLVE,
+            ),
+            selectedValue = config.targetResolution.orEmpty(),
+            onSelected = { selected ->
+                state.updateMpp {
+                    copy(targetResolution = selected.takeIf(String::isNotEmpty))
+                }
+            },
         )
 
         Text(
@@ -1401,7 +1439,7 @@ class ServerMppActivity : BaseServerActivity() {
     private fun projectCanonicalEditor(state: ServerUiState) {
         val config = state.mppConfig
         // Retain known, bijective migrations when possible. Any document outside that migration
-        // shape remains authoritative in the full editor and is still validated on Save.
+        // shape remains authoritative in the full editor and receives only a syntax check on Save.
         val migrated = state.migrateMppEditorOrKeepRaw(
             config.editorToml,
             MptunnelNative::migrateEditor,
