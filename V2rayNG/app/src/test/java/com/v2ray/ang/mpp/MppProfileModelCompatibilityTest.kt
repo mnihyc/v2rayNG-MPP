@@ -75,9 +75,16 @@ class MppProfileModelCompatibilityTest {
 
     @Test
     fun targetResolutionRoundTripsWithoutChangingCompatibilityProfiles() {
+        val compatibilityJson = JsonUtil.toJson(
+            ProfileItem(
+                configType = EConfigType.MPP,
+                mpp = MppProfileConfig(),
+            )
+        )
+        assertFalse(compatibilityJson.contains("\"targetResolution\""))
         val compatibility = requireNotNull(
             JsonUtil.fromJsonSafe(
-                """{"configType":"MPP","mpp":{}}""",
+                compatibilityJson,
                 ProfileItem::class.java,
             )
         )
