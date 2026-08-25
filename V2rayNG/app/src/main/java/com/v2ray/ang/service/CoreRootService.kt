@@ -93,8 +93,6 @@ class CoreRootService : Service(), ServiceControl {
         }
     }
 
-    override fun vpnProtect(socket: Int): Boolean = true
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun attachBaseContext(newBase: Context?) {

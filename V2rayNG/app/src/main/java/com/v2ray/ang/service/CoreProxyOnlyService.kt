@@ -82,15 +82,6 @@ class CoreProxyOnlyService : Service(), ServiceControl {
     }
 
     /**
-     * Protects the VPN socket.
-     * @param socket The socket to protect.
-     * @return True if the socket is protected, false otherwise.
-     */
-    override fun vpnProtect(socket: Int): Boolean {
-        return true
-    }
-
-    /**
      * Binds the service.
      * @param intent The intent.
      * @return The binder.

@@ -30,7 +30,6 @@ import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.mpp.MptunnelNative
 import com.v2ray.ang.mpp.MptunnelRuntimeWatchdogPolicy
-import com.v2ray.ang.mpp.SocketProtector
 import com.v2ray.ang.service.DialerNativeService
 import com.v2ray.ang.service.DialerWebviewService
 import com.v2ray.ang.service.NetworkMonitor
@@ -177,16 +176,15 @@ object CoreServiceManager {
     private fun launchMptunnel(service: Service, config: ProfileItem) {
         stopBrowserDialer(reconcileXray = false)
         activeEngine = ActiveEngine.MPTUNNEL
-        val protector = SocketProtector { fd ->
-            serviceControl?.get()?.vpnProtect(fd) == true
-        }
+        // Every supported run mode keeps this app process/UID outside its own traffic path,
+        // so every MPTUNNEL native socket already uses the underlying network.
         val started = MptunnelNative.start(
             context = service,
             profile = config,
             socksPort = SettingsManager.getSocksPort(),
             proxyUsername = SettingsManager.getSocksUsername(),
             proxyPassword = SettingsManager.getSocksPassword(),
-            protector = protector,
+            protector = null,
         )
         if (!started) error("MPTUNNEL native runtime rejected startup")
         startMptunnelWatchdog(serviceControl?.get() ?: error("MPTUNNEL service owner is unavailable"))
@@ -605,7 +603,7 @@ object CoreServiceManager {
 
     /**
      * Core callback handler implementation for handling V2Ray core events.
-     * Handles startup, shutdown, socket protection, and status emission.
+     * Handles startup, shutdown, and status emission.
      */
     private class CoreCallback : CoreCallbackHandler {
         /**

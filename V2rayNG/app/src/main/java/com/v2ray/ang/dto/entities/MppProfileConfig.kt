@@ -11,7 +11,10 @@ package com.v2ray.ang.dto.entities
 data class MppProfileConfig(
     /** Missing/zero identifies the legacy structured-or-raw dual representation. */
     val editorSchemaVersion: Int = LEGACY_EDITOR_SCHEMA_VERSION,
-    /** Syntax-valid editable TOML containing only app-managed material/runtime placeholders. */
+    /**
+     * Syntax-valid editable TOML. Proxy bindings and remote credential material remain managed
+     * placeholders; profile-local settings such as the management token persist here directly.
+     */
     val editorToml: String = "",
     /**
      * Explicit native carrier paths. `null` identifies profiles saved before arbitrary path

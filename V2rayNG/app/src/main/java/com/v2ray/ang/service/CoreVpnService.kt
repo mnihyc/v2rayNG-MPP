@@ -120,10 +120,6 @@ class CoreVpnService : VpnService(), ServiceControl {
         stopAllService(true)
     }
 
-    override fun vpnProtect(socket: Int): Boolean {
-        return protect(socket)
-    }
-
     override fun setUnderlyingNetworks(networks: Array<Network>?): Boolean {
         return super<VpnService>.setUnderlyingNetworks(networks)
     }
@@ -233,10 +229,11 @@ class CoreVpnService : VpnService(), ServiceControl {
         //if (MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED) == true) {
         //  builder.addDnsServer(PRIVATE_VLAN4_ROUTER)
         //} else {
-        SettingsManager.getVpnDnsServers().forEach {
-            if (Utils.isPureIpAddress(it)) {
-                builder.addDnsServer(it)
-            }
+        val vpnDnsServers = SettingsManager.getVpnDnsServers()
+            .filter(Utils::isPureIpAddress)
+        vpnDnsServers.forEach { builder.addDnsServer(it) }
+        vpnDnsExactRoutes(vpnDnsServers, bypassLan).forEach {
+            builder.addRoute(it.address, it.prefixLength)
         }
 
         //builder.setSession(V2RayServiceManager.getRunningServerName())

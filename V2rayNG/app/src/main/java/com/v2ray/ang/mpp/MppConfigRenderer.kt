@@ -1,6 +1,7 @@
 package com.v2ray.ang.mpp
 
 import com.v2ray.ang.dto.entities.MppProfileConfig
+import java.security.SecureRandom
 
 /**
  * Creates the initial syntax-valid MPTUNNEL editor document.
@@ -17,16 +18,47 @@ object MppConfigRenderer {
     const val LOCAL_USER_DEFINITION_TOKEN = "@mptunnel-local-user-definition@"
     const val LOCAL_USER_BINDING_TOKEN = "@mptunnel-local-user-binding@"
 
-    /** Creates an editable document with no runtime port, authentication, or material bytes. */
-    fun renderEditableTemplate(server: String, config: MppProfileConfig): String {
+    private const val MANAGEMENT_TOKEN_BYTES = 24
+    private const val MANAGEMENT_LISTEN = "127.0.0.1:7600"
+    private const val LOWERCASE_HEX = "0123456789abcdef"
+    private val secureRandom = SecureRandom()
+
+    /** Creates a persisted document with proxy bindings and remote credentials as placeholders. */
+    fun renderEditableTemplate(server: String, config: MppProfileConfig): String =
+        renderTemplate(server, config, includeManagement = true)
+
+    /**
+     * Creates the ephemeral runtime document for a schema-zero profile.
+     *
+     * A legacy profile has nowhere to persist or expose a newly generated management token, so
+     * this compatibility path deliberately omits the management listener. It must not be used to
+     * create or replace the authoritative editor document of a saved profile.
+     */
+    internal fun renderLegacyRuntimeTemplate(server: String, config: MppProfileConfig): String =
+        renderTemplate(server, config, includeManagement = false)
+
+    private fun renderTemplate(
+        server: String,
+        config: MppProfileConfig,
+        includeManagement: Boolean,
+    ): String {
         val paths = config.effectivePaths(server)
         require(paths.isNotEmpty()) { "MPP requires at least one path" }
         val advanced = config.advanced
+        val managementToken = if (includeManagement) newManagementToken() else null
 
         return buildString {
             appendLine("[logging]")
             appendLine("level = ${tomlString(config.logLevel)}")
             appendLine()
+            if (managementToken != null) {
+                appendLine("[management]")
+                appendLine("listen = [${tomlString(MANAGEMENT_LISTEN)}]")
+                appendLine("token = { from = \"raw\", value = ${tomlString(managementToken)} }")
+                appendLine("dashboard = true")
+                appendLine("allow_peer_diagnostics = false")
+                appendLine()
+            }
             appendLine("[[credentials]]")
             appendLine("credential_id = ${tomlString(config.credentialId)}")
             appendLine("principal_id = ${tomlString(config.principalId)}")
@@ -88,28 +120,12 @@ object MppConfigRenderer {
                 "transport_secret = ${managedRef(TRANSPORT_SECRET_MATERIAL_ID)}"
             )
             appendLine()
-            appendLine("[dns]")
-            appendLine("default = \"mpp-doh\"")
-            appendLine()
-            appendLine("[[dns.servers]]")
-            appendLine("name = \"mpp-doh\"")
-            appendLine("protocol = \"doh\"")
-            appendLine("address = \"1.1.1.1:443\"")
-            appendLine("tls_name = \"cloudflare-dns.com\"")
-            appendLine("path = \"/dns-query\"")
-            appendLine()
-            appendLine("[[dns.policies]]")
-            appendLine("name = \"mpp-doh\"")
-            appendLine("servers = [\"mpp-doh\"]")
-            appendLine("family = \"ipv4-and-ipv6\"")
-            appendLine("security = \"require-encrypted\"")
-            appendLine("strategy = \"ordered\"")
-            appendLine("answer_cidrs = []")
-            appendLine("query = { timeout_ms = 5000, inflight = 64, answers = 64 }")
-            appendLine(
-                "cache = { entries = 4096, positive_ttl_ms = 300000, " +
-                        "negative_ttl_ms = 30000, stale_ms = 30000, prefetch_ms = 30000 }"
-            )
+            appendLine("# Optional V2Ray-style `geoip:private` bypass. Uncomment this entire")
+            appendLine("# outbound together with its complete routing rule below only when")
+            appendLine("# this broad local bypass is intended.")
+            appendLine("# [[outbounds]]")
+            appendLine("# name = \"private-direct\"")
+            appendLine("# protocol = \"direct\"")
             appendLine()
             appendLine("[routing]")
             config.targetResolution?.let { targetResolution ->
@@ -119,9 +135,43 @@ object MppConfigRenderer {
                 appendLine("target_resolution = ${tomlString(targetResolution)}")
             }
             appendLine()
+            appendLine("# Complete V2Fly `geoip:private` literal set. With `as-is`, hostnames")
+            appendLine("# remain unresolved here and continue to the ordinary remote rule.")
+            appendLine("# [[routing.rules]]")
+            appendLine("# name = \"bypass-v2ray-private-literals\"")
+            appendLine("# inbounds = [\"local-mixed\"]")
+            appendLine("# destination_cidrs = [")
+            V2RAY_PRIVATE_CIDRS.forEach { cidr ->
+                appendLine("#   ${tomlString(cidr)},")
+            }
+            appendLine("# ]")
+            appendLine("# decision = \"allow-restricted\"")
+            appendLine("# outbound = \"private-direct\"")
+            appendLine()
+            appendLine("# Delegate literal targets, including a private VPN DNS endpoint such")
+            appendLine("# as 10.1.2.3, through MPP. The server still authorizes actual egress.")
+            appendLine("[[routing.rules]]")
+            appendLine("name = \"delegate-literal-targets\"")
+            appendLine("inbounds = [\"local-mixed\"]")
+            appendLine("destination_cidrs = [\"0.0.0.0/0\", \"::/0\"]")
+            appendLine("decision = \"allow-restricted\"")
+            appendLine("outbound = \"remote-mpp\"")
+            appendLine()
             appendLine("[[routing.rules]]")
             appendLine("name = \"default\"")
             appendLine("outbound = \"remote-mpp\"")
+        }
+    }
+
+    private fun newManagementToken(): String {
+        val bytes = ByteArray(MANAGEMENT_TOKEN_BYTES)
+        secureRandom.nextBytes(bytes)
+        return buildString(MANAGEMENT_TOKEN_BYTES * 2) {
+            bytes.forEach { byte ->
+                val value = byte.toInt() and 0xff
+                append(LOWERCASE_HEX[value ushr 4])
+                append(LOWERCASE_HEX[value and 0x0f])
+            }
         }
     }
 
@@ -151,4 +201,28 @@ object MppConfigRenderer {
         }
         append('"')
     }
+
+    private val V2RAY_PRIVATE_CIDRS = listOf(
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.88.99.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "255.255.255.255/32",
+        "::/128",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+        "ff00::/8",
+    )
 }

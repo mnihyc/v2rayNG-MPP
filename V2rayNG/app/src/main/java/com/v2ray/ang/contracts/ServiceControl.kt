@@ -21,13 +21,6 @@ interface ServiceControl {
     fun stopService()
 
     /**
-     * Protects the VPN socket.
-     * @param socket The socket to protect.
-     * @return True if the socket is protected, false otherwise.
-     */
-    fun vpnProtect(socket: Int): Boolean
-
-    /**
      * Declares the networks the tunnel runs on top of.
      * Only meaningful for the VPN service, the other run modes have no interface to report.
      *

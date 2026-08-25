@@ -15,7 +15,7 @@ import org.junit.Test
 class MppConfigRendererTest {
 
     @Test
-    fun editableDocumentIsSyntaxValidShapeWithOnlyManagedPlaceholders() {
+    fun editableDocumentIsSyntaxValidShapeWithManagedRemoteMaterial() {
         val config = legacyConfig().copy(
             credentialSecret = "credential-material-that-must-not-leak",
             pinnedCertificatePem = "certificate-material-that-must-not-leak",
@@ -42,8 +42,41 @@ class MppConfigRendererTest {
         assertFalse(template.contains(config.transportSecret))
         assertFalse(template.contains("_file"))
         assertTrue(template.contains("[routing]\ntarget_resolution = \"as-is\""))
+        assertTrue(template.contains("[management]\nlisten = [\"127.0.0.1:7600\"]"))
+        assertTrue(template.contains("dashboard = true"))
+        assertTrue(template.contains("allow_peer_diagnostics = false"))
         assertTrue(template.contains("outbound = \"remote-mpp\""))
         assertFalse(template.contains("action ="))
+    }
+
+    @Test
+    fun persistedTemplatesUseIndependentLowercaseManagementTokens() {
+        val first = MppConfigRenderer.renderEditableTemplate("server.example.com", legacyConfig())
+        val second = MppConfigRenderer.renderEditableTemplate("server.example.com", legacyConfig())
+        val tokenPattern = Regex(
+            """token = \{ from = "raw", value = "([0-9a-f]{48})" \}"""
+        )
+        val firstToken = requireNotNull(tokenPattern.find(first)?.groupValues?.get(1))
+        val secondToken = requireNotNull(tokenPattern.find(second)?.groupValues?.get(1))
+
+        assertEquals(48, firstToken.length)
+        assertEquals(48, secondToken.length)
+        assertFalse(firstToken == secondToken)
+        assertEquals(1, tokenPattern.findAll(first).count())
+    }
+
+    @Test
+    fun legacyRuntimeTemplateHasNoUnpersistedManagementCredential() {
+        val template = MppConfigRenderer.renderLegacyRuntimeTemplate(
+            "server.example.com",
+            legacyConfig(),
+        )
+
+        assertFalse(template.contains("[management]"))
+        assertFalse(template.contains("127.0.0.1:7600"))
+        assertFalse(template.contains("dashboard = true"))
+        assertFalse(template.contains("allow_peer_diagnostics"))
+        assertFalse(template.contains("from = \"raw\""))
     }
 
     @Test
@@ -81,7 +114,7 @@ class MppConfigRendererTest {
             "server.example.com",
             legacyConfig(),
         )
-        assertTrue(compatibility.contains("[routing]\n\n[[routing.rules]]"))
+        assertTrue(compatibility.contains("[routing]\n\n# Complete V2Fly"))
         assertFalse(compatibility.contains("target_resolution"))
 
         for (mode in MppProfileConfig.SUPPORTED_TARGET_RESOLUTIONS.filterNotNull()) {
@@ -94,29 +127,82 @@ class MppConfigRendererTest {
     }
 
     @Test
-    fun editableDocumentUsesCanonicalGroupedDnsSchema() {
+    fun editableDocumentLeavesVpnDnsToV2rayNg() {
         val template = MppConfigRenderer.renderEditableTemplate(
             "server.example.com",
             legacyConfig(),
         )
 
-        assertTrue(template.contains("[dns]\ndefault = \"mpp-doh\""))
-        assertTrue(template.contains("[[dns.servers]]"))
-        assertTrue(template.contains("protocol = \"doh\""))
-        assertTrue(template.contains("address = \"1.1.1.1:443\""))
-        assertTrue(template.contains("tls_name = \"cloudflare-dns.com\""))
-        assertTrue(template.contains("path = \"/dns-query\""))
-        assertTrue(template.contains("[[dns.policies]]"))
-        assertTrue(template.contains("servers = [\"mpp-doh\"]"))
-        assertTrue(template.contains("family = \"ipv4-and-ipv6\""))
-        assertTrue(template.contains("security = \"require-encrypted\""))
-        assertTrue(template.contains("strategy = \"ordered\""))
-        assertTrue(template.contains("answer_cidrs = []"))
-        assertTrue(template.contains("query = { timeout_ms = 5000, inflight = 64, answers = 64 }"))
-        assertTrue(template.contains("cache = { entries = 4096"))
+        assertFalse(template.contains("[dns]"))
+        assertFalse(template.contains("[[dns."))
+        assertFalse(template.contains("mpp-doh"))
+        assertFalse(template.contains("cloudflare-dns.com"))
         assertFalse(template.contains("default_dns_plan"))
         assertFalse(template.contains("dns.upstreams"))
         assertFalse(template.contains("dns.plans"))
+    }
+
+    @Test
+    fun editableDocumentOrdersCompletePrivateBypassBeforeLiteralDelegation() {
+        val template = MppConfigRenderer.renderEditableTemplate(
+            "server.example.com",
+            legacyConfig().copy(targetResolution = MppProfileConfig.TARGET_RESOLUTION_AS_IS),
+        )
+        val expectedPrivateCidrs = listOf(
+            "0.0.0.0/8",
+            "10.0.0.0/8",
+            "100.64.0.0/10",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "172.16.0.0/12",
+            "192.0.0.0/24",
+            "192.0.2.0/24",
+            "192.88.99.0/24",
+            "192.168.0.0/16",
+            "198.18.0.0/15",
+            "198.51.100.0/24",
+            "203.0.113.0/24",
+            "224.0.0.0/4",
+            "240.0.0.0/4",
+            "255.255.255.255/32",
+            "::/128",
+            "::1/128",
+            "fc00::/7",
+            "fe80::/10",
+            "ff00::/8",
+        )
+        val renderedPrivateCidrs = Regex("""(?m)^#   "([^"]+)",$""")
+            .findAll(template)
+            .map { match -> match.groupValues[1] }
+            .toList()
+        val privateOutbound = template.indexOf("# name = \"private-direct\"")
+        val privateRule = template.indexOf("# name = \"bypass-v2ray-private-literals\"")
+        val literalRule = template.indexOf("name = \"delegate-literal-targets\"")
+        val defaultRule = template.indexOf("name = \"default\"")
+
+        assertEquals(expectedPrivateCidrs, renderedPrivateCidrs)
+        assertTrue(privateOutbound >= 0)
+        assertTrue(
+            template.contains(
+                "# [[outbounds]]\n" +
+                        "# name = \"private-direct\"\n" +
+                        "# protocol = \"direct\""
+            )
+        )
+        assertTrue(privateRule > privateOutbound)
+        assertTrue(literalRule > privateRule)
+        assertTrue(defaultRule > literalRule)
+        assertTrue(template.contains("target_resolution = \"as-is\""))
+        assertTrue(template.contains("as 10.1.2.3, through MPP"))
+        assertTrue(
+            template.contains(
+                "name = \"delegate-literal-targets\"\n" +
+                        "inbounds = [\"local-mixed\"]\n" +
+                        "destination_cidrs = [\"0.0.0.0/0\", \"::/0\"]\n" +
+                        "decision = \"allow-restricted\"\n" +
+                        "outbound = \"remote-mpp\""
+            )
+        )
     }
 
     @Test

@@ -25,7 +25,8 @@ fun interface MptunnelLogSink {
 /**
  * Small Kotlin boundary around the embedded MPTUNNEL cdylib.
  *
- * The editable document contains only managed placeholders. Rust finalizes those placeholders
+ * The editable document persists profile-local settings and uses managed placeholders only for
+ * app-owned runtime and remote credential material. Rust finalizes those placeholders
  * syntax-aware from Base64 bindings, then starts from the resulting self-contained TOML.
  */
 object MptunnelNative {
@@ -48,7 +49,7 @@ object MptunnelNative {
     @JvmStatic
     private external fun nativeStart(
         configToml: String,
-        protector: SocketProtector,
+        protector: SocketProtector?,
         logSink: MptunnelLogSink,
         readyTimeoutMs: Long,
     ): Boolean
@@ -90,7 +91,7 @@ object MptunnelNative {
         socksPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
-        protector: SocketProtector,
+        protector: SocketProtector?,
     ): Boolean = startWithLogSink(
         context = context,
         profile = profile,
@@ -109,7 +110,7 @@ object MptunnelNative {
         socksPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
-        protector: SocketProtector,
+        protector: SocketProtector?,
         nativeLogSink: MptunnelLogSink,
     ): Boolean = startWithLogSink(
         context = context,
@@ -127,7 +128,7 @@ object MptunnelNative {
         socksPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
-        protector: SocketProtector,
+        protector: SocketProtector?,
         nativeLogSink: MptunnelLogSink,
     ): Boolean {
         if (!legacyMaterialCleanupComplete) {
@@ -169,7 +170,7 @@ object MptunnelNative {
             )
         } catch (failure: Throwable) {
             // A readiness timeout still requests cooperative shutdown on the Rust side. Finish
-            // that teardown before Android closes the service which owns the protect callback.
+            // that teardown before Android closes the service and any host callback it owns.
             runCatching { nativeStop(STOP_TIMEOUT_MS) }
             throw IllegalStateException(
                 failure.message?.takeUnless(String::isBlank) ?: "MPTUNNEL failed to start",
@@ -324,7 +325,7 @@ object MptunnelNative {
         if (config.useRawToml && config.rawToml.isNotBlank()) {
             return migrateEditor(config.rawToml)
         }
-        val legacyDocument = MppConfigRenderer.renderEditableTemplate(
+        val legacyDocument = MppConfigRenderer.renderLegacyRuntimeTemplate(
             profile.server.orEmpty(),
             config,
         )

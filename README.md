@@ -39,7 +39,11 @@ supports:
   reversible encoding, not encryption, so profile backups remain sensitive;
 - a per-profile MPTUNNEL log level, defaulting to `info`, whose native,
   redacted records are delivered through the app logger and appear in the
-  in-app Logcat view (`debug` adds correlated connection routing details); and
+  in-app Logcat view (`debug` adds correlated connection routing details);
+- an authenticated MPTUNNEL dashboard on `127.0.0.1:7600`. Each newly persisted
+  template receives an independent 24-byte random token as 48 lowercase hex
+  characters in its authoritative TOML; peer diagnostics remain disabled by
+  default; and
 - one syntax-preserving TOML document shared by the guided and raw views. Raw
   edits retain comments and unknown native settings, while app-managed
   placeholders are replaced by inline Base64 references only when MPTUNNEL
@@ -82,18 +86,21 @@ rejected, and the exact option vocabulary is:
 The guided controls expose every option above. Switching transport removes only
 options that cannot apply to the selected transport.
 
-### Generated DNS policy
+### VPN DNS ownership
 
-A new guided profile renders the canonical DNS schema: `[dns]` selects its
-`default` policy, `[[dns.servers]]` defines a DoH server with
-`protocol = "doh"`, literal `address`, `tls_name`, and HTTP `path`, and
-`[[dns.policies]]` selects that named server. Family, encryption requirement,
-ordered strategy, answer CIDRs, query limits, and cache limits are grouped in
-the policy. If `[dns]` is omitted, MPTUNNEL synthesizes the OS `system` server
-and `default` policy. Advanced raw TOML can replace or extend that single
-authoritative document with other native DNS servers, policies, selection
-rules, and named override-record or synthetic-capture definitions attached to
-the intended policies with `override_records` or `synthetic_capture`.
+New generated MPTUNNEL documents intentionally contain no active `[dns]`
+section. v2rayNG owns Android's VPN DNS setting, and captured DNS requests are
+ordinary TCP or UDP proxy traffic. The default literal-delegation rule sends a
+configured private resolver such as `10.1.2.3` through `remote-mpp`; the server
+then independently authorizes its egress. MPTUNNEL `[dns]` remains available in
+advanced TOML only for local routing-resolution policy, such as `route-only` or
+`full-resolve`; it does not configure Android VPN DNS.
+
+This Product-traffic path is separate from MPTUNNEL's own carrier and native
+egress sockets. Every supported run mode keeps the app process or UID outside
+its own traffic path, so those sockets use the underlying network without a
+per-socket VPN callback; the strict protected JNI path remains available to a
+different embedding that captures its own process.
 
 ### Target resolution
 
@@ -111,6 +118,14 @@ mode. Guided changes use the native syntax-preserving editor; advanced/custom
 TOML is never regenerated or silently rewritten. Saving advanced TOML checks
 only its syntax; managed Android bindings and complete native configuration
 validation run when the profile starts.
+
+Generated templates also show a complete, commented V2Fly `geoip:private`
+direct outbound and its 21 literal CIDRs. It is opt-in and precedes the active
+literal-delegation rule, so users can deliberately bypass those destinations
+without changing hostname handling. Existing schema-v1 TOML remains the
+authority and is not regenerated. The ephemeral schema-zero runtime fallback
+omits management because it has no persisted document in which to expose a
+fresh authentication token.
 
 ## Release integrity
 

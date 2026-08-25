@@ -253,7 +253,7 @@ class MptunnelNativeInstrumentedTest {
                     socksPort = port,
                     proxyUsername = proxyUsername,
                     proxyPassword = proxyPassword,
-                    protector = SocketProtector { true },
+                    protector = null,
                     nativeLogSink = observingLogSink,
                 )
             )
