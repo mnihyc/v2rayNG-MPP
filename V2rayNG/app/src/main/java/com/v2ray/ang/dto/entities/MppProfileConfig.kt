@@ -3,10 +3,10 @@ package com.v2ray.ang.dto.entities
 /**
  * Android-facing MPP profile values.
  *
- * Editor-schema v1 profiles have one authoritative, syntax-preserving TOML document. Guided
+ * Editor-schema v2 profiles have one authoritative, syntax-preserving TOML document. Guided
  * values below are its cached native projection and must never be patched independently from the
- * document. Material fields contain padded standard Base64 in v1; legacy profiles retain their
- * historical encodings until migrated without guessing their presentation.
+ * document. Material fields contain padded standard Base64 in v1/v2; schema-zero profiles retain
+ * their historical encodings until migrated without guessing their presentation.
  */
 data class MppProfileConfig(
     /** Missing/zero identifies the legacy structured-or-raw dual representation. */
@@ -34,12 +34,12 @@ data class MppProfileConfig(
     val udpPort: Int = DEFAULT_SERVER_PORT,
     val credentialId: String = DEFAULT_CREDENTIAL_ID,
     val principalId: String = DEFAULT_PRINCIPAL_ID,
-    /** Padded standard Base64 for editor-schema v1; literal legacy bytes otherwise. */
+    /** Padded standard Base64 for editor schemas v1/v2; literal schema-zero bytes otherwise. */
     val credentialSecret: String = "",
     val tlsServerName: String = DEFAULT_TLS_SERVER_NAME,
-    /** Padded standard Base64 for editor-schema v1; literal legacy PEM otherwise. */
+    /** Padded standard Base64 for editor schemas v1/v2; literal schema-zero PEM otherwise. */
     val pinnedCertificatePem: String = "",
-    /** Padded standard Base64 for editor-schema v1; legacy text or `base64:` otherwise. */
+    /** Padded standard Base64 for editor schemas v1/v2; schema-zero text or `base64:` otherwise. */
     val transportSecret: String = "",
     /** Editor view preference only. It never selects a second configuration authority. */
     val useRawToml: Boolean = false,
@@ -73,6 +73,11 @@ data class MppProfileConfig(
         else -> DEFAULT_SERVER_PORT
     }
 
+    /** Editor-schema 1 remains an authoritative full-TOML document under v0.4.4. */
+    fun withRawTomlMode(enabled: Boolean): MppProfileConfig = copy(
+        useRawToml = enabled || editorSchemaVersion == PREVIOUS_EDITOR_SCHEMA_VERSION,
+    )
+
     /** Avoid accidentally disclosing first-class material if a profile is ever stringified. */
     override fun toString(): String =
         "MppProfileConfig(" +
@@ -98,7 +103,12 @@ data class MppProfileConfig(
         const val TARGET_RESOLUTION_ROUTE_ONLY = "route-only"
         const val TARGET_RESOLUTION_FULL_RESOLVE = "full-resolve"
         const val LEGACY_EDITOR_SCHEMA_VERSION = 0
-        const val CURRENT_EDITOR_SCHEMA_VERSION = 1
+        const val PREVIOUS_EDITOR_SCHEMA_VERSION = 1
+        const val CURRENT_EDITOR_SCHEMA_VERSION = 2
+
+        fun usesCanonicalMaterialEncoding(schemaVersion: Int): Boolean =
+            schemaVersion == PREVIOUS_EDITOR_SCHEMA_VERSION ||
+                    schemaVersion == CURRENT_EDITOR_SCHEMA_VERSION
 
         val SUPPORTED_LOG_LEVELS = listOf("off", "error", "warn", "info", "debug")
         val SUPPORTED_TARGET_RESOLUTIONS = listOf(

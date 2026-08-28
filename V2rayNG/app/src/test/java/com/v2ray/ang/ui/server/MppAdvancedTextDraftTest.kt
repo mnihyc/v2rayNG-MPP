@@ -11,27 +11,28 @@ class MppAdvancedTextDraftTest {
         val valid = validDraft()
         assertTrue(valid.isValid())
         listOf(
-            valid.copy(pathProbeIntervalMs = ""),
-            valid.copy(pathProbeTimeoutMs = "999999999999999999999999"),
-            valid.copy(extraTrafficHintPercent = "-1"),
-            valid.copy(authFreshnessWindowSeconds = "0"),
-            valid.copy(sessionRetentionTimeoutMs = "0"),
-            valid.copy(tcpHeartbeatIntervalMs = "0"),
-            valid.copy(tcpHeartbeatTimeoutMs = "4999"),
-            valid.copy(quicKeepAliveIntervalMs = "0"),
-            valid.copy(quicIdleTimeoutMs = "10000"),
+            valid.copy(pathProbeIntervalS = ""),
+            valid.copy(pathProbeTimeoutS = "Infinity"),
+            valid.copy(optionalReinjectionBudgetPercent = "-1"),
+            valid.copy(authFreshnessWindowS = "0"),
+            valid.copy(authFreshnessWindowS = "0.5"),
+            valid.copy(sessionRetentionTimeoutS = "0"),
+            valid.copy(tcpHeartbeatIntervalS = "0"),
+            valid.copy(tcpHeartbeatTimeoutS = "4.999"),
+            valid.copy(quicKeepAliveIntervalS = "0"),
+            valid.copy(quicIdleTimeoutS = "10"),
         ).forEach { invalid -> assertFalse(invalid.isValid()) }
     }
 
     private fun validDraft() = MppAdvancedTextDraft(
-        pathProbeIntervalMs = "30000",
-        pathProbeTimeoutMs = "5000",
-        extraTrafficHintPercent = "20",
-        authFreshnessWindowSeconds = "60",
-        sessionRetentionTimeoutMs = "120000",
-        tcpHeartbeatIntervalMs = "5000",
-        tcpHeartbeatTimeoutMs = "15000",
-        quicKeepAliveIntervalMs = "10000",
-        quicIdleTimeoutMs = "30000",
+        pathProbeIntervalS = "30",
+        pathProbeTimeoutS = "5.25",
+        optionalReinjectionBudgetPercent = "20",
+        authFreshnessWindowS = "60",
+        sessionRetentionTimeoutS = "120",
+        tcpHeartbeatIntervalS = "5",
+        tcpHeartbeatTimeoutS = "15",
+        quicKeepAliveIntervalS = "10",
+        quicIdleTimeoutS = "30",
     )
 }

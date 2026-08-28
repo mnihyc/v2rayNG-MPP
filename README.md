@@ -31,7 +31,8 @@ supports:
 - up to 64 independently ordered TCP and QUIC paths and carrier slots, with
   each full endpoint URI remaining authoritative;
 - the complete native endpoint-URI option set plus profile-level path-probe,
-  heartbeat, timeout, retention, redundancy-budget, and authentication tuning;
+  heartbeat, timeout, retention, optional-reinjection-budget, and authentication
+  tuning. All user-configured durations use MPTUNNEL v0.4.4's seconds grammar;
 - credential and transport bytes displayed/copied as lowercase hex, with
   explicit **Paste as hex** and **Paste as UTF-8** actions and exact-byte file
   import; pinned certificates remain exact PEM text;
@@ -48,6 +49,13 @@ supports:
   edits retain comments and unknown native settings, while app-managed
   placeholders are replaced by inline Base64 references only when MPTUNNEL
   starts—no user-visible material paths or runtime material files are needed.
+
+New generated client documents visibly pin the ordinary product envelope:
+`[flow]` uses a 300-second payload-idle timeout, a 10% optional reliable
+reinjection budget, and 10% sender-side QUIC loss compensation. Global product
+admission and local mixed-inbound limits are 4096. Per-outbound performance can
+override `[flow]`, while a QUIC path's `loss-compensation-percent` URI value has
+the highest precedence for that path.
 
 Android VPN capture remains available to MPP profiles, including per-app
 allow/bypass filtering, literal VPN DNS servers, and optional IPv6 TCP/UDP.
@@ -68,17 +76,20 @@ rejected, and the exact option vocabulary is:
 
 - `source-address=IP` for a literal local IPv4 or IPv6 address; omission lets
   the OS select the source address;
-- `initial-srtt-ms=N` (`1..=4294967295`) and `initial-rttvar-ms=N`
-  (`0..=4294967295`);
+- `initial-srtt-s=S` (`0.001..=4294967.295`) and `initial-rttvar-s=S`
+  (`0..=4294967.295`), expressed at exact millisecond precision;
 - exactly one of `initial-rate-bps=N`, `initial-rate-kbps=N`,
   `initial-rate-mbps=N` (positive and representable as `u64` bit/s), or
   `initial-rate=unknown|unlimited`; omission means `unknown`;
+- `loss-compensation-percent=P` on QUIC only, where `P` is from `0` through
+  `99.9999` with at most four fractional digits. It is sender-side loss-policy
+  input, independent of the initial-rate hint;
 - `max-datagram-payload-bytes=N` (`512..=65000`) on QUIC only;
 - `max-tcp-carriers=N` (`1..=65535`) on TCP only, default `3`. The app's
   default MPTUNNEL resource policy still limits one profile to 64 total carrier
   slots;
-- `port-rotation-interval-ms=N` (`5000..=4294967295`) only with a destination
-  port range, whose default rotation interval is `300000` ms; and
+- `port-rotation-interval-s=S` (`5..=4294967.295`, at exact millisecond
+  precision) only with a destination port range, whose default is `300` s; and
 - `backup`, `expensive`, `allow-bulk`, `control-only`, and `allow-datagrams`,
   each with exactly `=true` or `=false`. Their defaults are respectively
   `false`, `false`, `true`, `false`, and `true`; `allow-datagrams` is TCP-only.
@@ -122,8 +133,12 @@ validation run when the profile starts.
 Generated templates also show a complete, commented V2Fly `geoip:private`
 direct outbound and its 21 literal CIDRs. It is opt-in and precedes the active
 literal-delegation rule, so users can deliberately bypass those destinations
-without changing hostname handling. Existing schema-v1 TOML remains the
-authority and is not regenerated. The ephemeral schema-zero runtime fallback
+without changing hostname handling. Editor projection schema 2 is the only
+guided v0.4.4 contract. Existing schema-1 TOML remains byte-for-byte authority
+in the advanced editor: removed v0.4.3 duration fields and URI options are not
+aliased, converted, or regenerated, so native v0.4.4 validation reports the
+incompatible key that the operator must update deliberately. The ephemeral
+schema-zero runtime fallback remains a separate legacy-material migration and
 omits management because it has no persisted document in which to expose a
 fresh authentication token.
 

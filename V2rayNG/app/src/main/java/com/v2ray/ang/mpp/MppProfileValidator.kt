@@ -5,6 +5,7 @@ import com.v2ray.ang.dto.entities.MppProfileConfig
 import java.util.UUID
 
 enum class MppValidationError {
+    EDITOR_SCHEMA,
     LOG_LEVEL,
     TARGET_RESOLUTION,
     PATH_REQUIRED,
@@ -33,11 +34,21 @@ object MppProfileValidator {
     private val policyId = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
     fun validate(config: MppProfileConfig): MppValidationError? {
-        if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
-            if (config.editorToml.isBlank()) return MppValidationError.RAW_TOML
-            if (config.useRawToml) return validateCanonicalMaterials(config)
-        } else if (config.useRawToml) {
-            return validateLegacyRaw(config)
+        when (config.editorSchemaVersion) {
+            MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION -> {
+                if (config.editorToml.isBlank()) return MppValidationError.RAW_TOML
+                if (config.useRawToml) return validateCanonicalMaterials(config)
+            }
+            MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION -> {
+                // Schema 1 TOML is the authority. Do not reinterpret its cached structured model;
+                // native v0.4.4 finalization provides the breaking-grammar diagnostic.
+                if (config.editorToml.isBlank()) return MppValidationError.RAW_TOML
+                return validateCanonicalMaterials(config)
+            }
+            MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION -> {
+                if (config.useRawToml) return validateLegacyRaw(config)
+            }
+            else -> return MppValidationError.EDITOR_SCHEMA
         }
         if (config.logLevel !in MppProfileConfig.SUPPORTED_LOG_LEVELS) {
             return MppValidationError.LOG_LEVEL
@@ -144,18 +155,25 @@ object MppProfileValidator {
 
     private fun isValidAdvancedTuning(value: MppAdvancedConfig?): Boolean {
         if (value == null) return true
-        return value.pathProbeIntervalMs > 0L &&
-                value.pathProbeTimeoutMs > 0L &&
-                value.extraTrafficHintPercent in
-                0..MppAdvancedConfig.MAX_EXTRA_TRAFFIC_HINT_PERCENT &&
-                value.authFreshnessWindowSeconds > 0L &&
-                value.sessionRetentionTimeoutMs > 0L &&
-                value.tcpHeartbeatIntervalMs > 0L &&
-                value.tcpHeartbeatTimeoutMs >= value.tcpHeartbeatIntervalMs &&
-                value.quicKeepAliveIntervalMs > 0L &&
-                value.quicIdleTimeoutMs > value.quicKeepAliveIntervalMs &&
-                value.quicIdleTimeoutMs <= MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS
+        return value.pathProbeIntervalS.isFinitePositive() &&
+                value.pathProbeTimeoutS.isFinitePositive() &&
+                value.optionalReinjectionBudgetPercent in
+                0..MppAdvancedConfig.MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT &&
+                value.authFreshnessWindowS.isFinitePositiveWholeSecond() &&
+                value.sessionRetentionTimeoutS.isFinitePositive() &&
+                value.tcpHeartbeatIntervalS.isFinitePositive() &&
+                value.tcpHeartbeatTimeoutS.isFinitePositive() &&
+                value.tcpHeartbeatTimeoutS >= value.tcpHeartbeatIntervalS &&
+                value.quicKeepAliveIntervalS.isFinitePositive() &&
+                value.quicIdleTimeoutS.isFinitePositive() &&
+                value.quicIdleTimeoutS > value.quicKeepAliveIntervalS &&
+                value.quicIdleTimeoutS <= MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_S
     }
+
+    private fun Double.isFinitePositive(): Boolean = isFinite() && this > 0.0
+
+    private fun Double.isFinitePositiveWholeSecond(): Boolean =
+        isFinitePositive() && this % 1.0 == 0.0
 
     private fun isValidCredentialSecret(config: MppProfileConfig): Boolean {
         val value = runCatching {
@@ -188,10 +206,12 @@ object MppProfileValidator {
         value: String,
         editorSchemaVersion: Int,
         acceptedLegacyBinaryPrefix: Boolean = false,
-    ): ByteArray = if (editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+    ): ByteArray = if (MppProfileConfig.usesCanonicalMaterialEncoding(editorSchemaVersion)) {
         MppMaterialCodec.decodeStored(value)
-    } else {
+    } else if (editorSchemaVersion == MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION) {
         MppMaterialCodec.decodeLegacy(value, acceptedLegacyBinaryPrefix)
+    } else {
+        error("Unsupported MPP editor schema $editorSchemaVersion")
     }
 
     private fun String.tokenCount(token: String): Int = split(token).size - 1

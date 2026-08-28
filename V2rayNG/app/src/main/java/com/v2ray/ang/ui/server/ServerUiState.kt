@@ -233,8 +233,16 @@ class ServerUiState(
     private fun canonicalMppConfig(): MppProfileConfig {
         val credential = runCatching { MppMaterialCodec.decodeHex(mppCredentialHex) }.getOrNull()
         val transport = runCatching { MppMaterialCodec.decodeHex(mppTransportHex) }.getOrNull()
+        val savedSchemaVersion = when (mppConfig.editorSchemaVersion) {
+            MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION ->
+                MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION
+            MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION,
+            MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION ->
+                MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION
+            else -> mppConfig.editorSchemaVersion
+        }
         return mppConfig.copy(
-            editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            editorSchemaVersion = savedSchemaVersion,
             credentialSecret = if (mppCredentialDecodeFailed) {
                 mppConfig.credentialSecret
             } else {
@@ -268,10 +276,10 @@ class ServerUiState(
             } else {
                 null
             }
-            val resolvedMpp = mpp ?: MppProfileConfig(
+            val resolvedMpp = (mpp ?: MppProfileConfig(
                 editorSchemaVersion = MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
                 targetResolution = MppProfileConfig.TARGET_RESOLUTION_AS_IS,
-            )
+            )).let { it.withRawTomlMode(it.useRawToml) }
             val materialDraft = decodeMppMaterialDraft(resolvedMpp)
             return ServerUiState(
                 configType = initialConfig.configType,
@@ -371,10 +379,17 @@ class ServerUiState(
         private fun decodeMppMaterialDraft(config: MppProfileConfig): MaterialDraft {
             fun bytes(value: String, legacyBinaryPrefix: Boolean = false): DecodedMaterial =
                 runCatching {
-                    if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+                    if (MppProfileConfig.usesCanonicalMaterialEncoding(
+                            config.editorSchemaVersion
+                        )
+                    ) {
                         MppMaterialCodec.decodeStored(value)
-                    } else {
+                    } else if (
+                        config.editorSchemaVersion == MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION
+                    ) {
                         MppMaterialCodec.decodeLegacy(value, legacyBinaryPrefix)
+                    } else {
+                        error("Unsupported MPP editor schema ${config.editorSchemaVersion}")
                     }
                 }.fold(
                     onSuccess = { DecodedMaterial(it, failed = false) },

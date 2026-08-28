@@ -317,10 +317,21 @@ object MptunnelNative {
 
     private fun canonicalEditorDocument(profile: ProfileItem): String {
         val config = requireNotNull(profile.mpp)
-        if (config.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
-            config.editorToml.isNotBlank()
-        ) {
-            return config.editorToml
+        when (config.editorSchemaVersion) {
+            MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION,
+            MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION -> {
+                check(config.editorToml.isNotBlank()) {
+                    "MPP editor schema ${config.editorSchemaVersion} has no authoritative TOML"
+                }
+                // Schema 1 is deliberately not migrated or regenerated. Native v0.4.4 finalization
+                // reports its removed duration grammar at the exact authoritative document.
+                return config.editorToml
+            }
+            MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION -> Unit
+            else -> error(
+                "Unsupported MPP editor schema ${config.editorSchemaVersion}; " +
+                        "the authoritative TOML was not converted"
+            )
         }
         if (config.useRawToml && config.rawToml.isNotBlank()) {
             return migrateEditor(config.rawToml)
@@ -337,12 +348,14 @@ object MptunnelNative {
         value: String,
         editorSchemaVersion: Int,
         acceptedLegacyBinaryPrefix: Boolean = false,
-    ): String = if (editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION) {
+    ): String = if (MppProfileConfig.usesCanonicalMaterialEncoding(editorSchemaVersion)) {
         MppMaterialCodec.encodeStored(MppMaterialCodec.decodeStored(value))
-    } else {
+    } else if (editorSchemaVersion == MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION) {
         MppMaterialCodec.encodeStored(
             MppMaterialCodec.decodeLegacy(value, acceptedLegacyBinaryPrefix)
         )
+    } else {
+        error("Unsupported MPP editor schema $editorSchemaVersion")
     }
 
     private fun finalizeBindings(

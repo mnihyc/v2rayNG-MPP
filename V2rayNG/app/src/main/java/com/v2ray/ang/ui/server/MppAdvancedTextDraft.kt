@@ -4,35 +4,39 @@ import com.v2ray.ang.dto.entities.MppAdvancedConfig
 
 /** Text-level validation for guided numeric edits which are not yet committed to the TOML model. */
 internal data class MppAdvancedTextDraft(
-    val pathProbeIntervalMs: String,
-    val pathProbeTimeoutMs: String,
-    val extraTrafficHintPercent: String,
-    val authFreshnessWindowSeconds: String,
-    val sessionRetentionTimeoutMs: String,
-    val tcpHeartbeatIntervalMs: String,
-    val tcpHeartbeatTimeoutMs: String,
-    val quicKeepAliveIntervalMs: String,
-    val quicIdleTimeoutMs: String,
+    val pathProbeIntervalS: String,
+    val pathProbeTimeoutS: String,
+    val optionalReinjectionBudgetPercent: String,
+    val authFreshnessWindowS: String,
+    val sessionRetentionTimeoutS: String,
+    val tcpHeartbeatIntervalS: String,
+    val tcpHeartbeatTimeoutS: String,
+    val quicKeepAliveIntervalS: String,
+    val quicIdleTimeoutS: String,
 ) {
     fun isValid(): Boolean {
-        val probeInterval = pathProbeIntervalMs.toLongOrNull() ?: return false
-        val probeTimeout = pathProbeTimeoutMs.toLongOrNull() ?: return false
-        val extraTraffic = extraTrafficHintPercent.toIntOrNull() ?: return false
-        val authFreshness = authFreshnessWindowSeconds.toLongOrNull() ?: return false
-        val sessionRetention = sessionRetentionTimeoutMs.toLongOrNull() ?: return false
-        val tcpInterval = tcpHeartbeatIntervalMs.toLongOrNull() ?: return false
-        val tcpTimeout = tcpHeartbeatTimeoutMs.toLongOrNull() ?: return false
-        val quicKeepAlive = quicKeepAliveIntervalMs.toLongOrNull() ?: return false
-        val quicIdle = quicIdleTimeoutMs.toLongOrNull() ?: return false
-        return probeInterval > 0L &&
-                probeTimeout > 0L &&
-                extraTraffic in 0..MppAdvancedConfig.MAX_EXTRA_TRAFFIC_HINT_PERCENT &&
-                authFreshness > 0L &&
-                sessionRetention > 0L &&
-                tcpInterval > 0L &&
+        val probeInterval = pathProbeIntervalS.toFiniteDoubleOrNull() ?: return false
+        val probeTimeout = pathProbeTimeoutS.toFiniteDoubleOrNull() ?: return false
+        val reinjectionBudget = optionalReinjectionBudgetPercent.toIntOrNull() ?: return false
+        val authFreshness = authFreshnessWindowS.toFiniteDoubleOrNull() ?: return false
+        val sessionRetention = sessionRetentionTimeoutS.toFiniteDoubleOrNull() ?: return false
+        val tcpInterval = tcpHeartbeatIntervalS.toFiniteDoubleOrNull() ?: return false
+        val tcpTimeout = tcpHeartbeatTimeoutS.toFiniteDoubleOrNull() ?: return false
+        val quicKeepAlive = quicKeepAliveIntervalS.toFiniteDoubleOrNull() ?: return false
+        val quicIdle = quicIdleTimeoutS.toFiniteDoubleOrNull() ?: return false
+        return probeInterval > 0.0 &&
+                probeTimeout > 0.0 &&
+                reinjectionBudget in
+                0..MppAdvancedConfig.MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT &&
+                authFreshness > 0.0 && authFreshness % 1.0 == 0.0 &&
+                sessionRetention > 0.0 &&
+                tcpInterval > 0.0 &&
                 tcpTimeout >= tcpInterval &&
-                quicKeepAlive > 0L &&
+                quicKeepAlive > 0.0 &&
                 quicIdle > quicKeepAlive &&
-                quicIdle <= MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS
+                quicIdle <= MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_S
     }
+
+    private fun String.toFiniteDoubleOrNull(): Double? =
+        toDoubleOrNull()?.takeIf { it.isFinite() }
 }

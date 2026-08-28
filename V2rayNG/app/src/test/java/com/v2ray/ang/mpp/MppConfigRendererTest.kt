@@ -27,6 +27,17 @@ class MppConfigRendererTest {
 
         assertEquals(1, Regex("\\[\\[inbounds]]").findAll(template).count())
         assertTrue(template.startsWith("[logging]\nlevel = \"info\"\n"))
+        assertTrue(
+            template.contains(
+                "[flow]\n" +
+                        "# TCP streams and UDP associations idle on application payload; 0 disables.\n" +
+                        "idle_timeout_s = 300"
+            )
+        )
+        assertTrue(template.contains("optional_reinjection_budget_percent = 10"))
+        assertTrue(template.contains("quic_loss_compensation_percent = 10"))
+        assertTrue(template.contains("[admission]\nmax_live_flows = 4096"))
+        assertTrue(template.contains("[inbounds.admission]\nmax_connections = 4096"))
         assertTrue(template.contains("protocol = \"mixed\""))
         assertTrue(template.contains("127.0.0.1:${MppConfigRenderer.SOCKS_PORT_TOKEN}"))
         assertTrue(template.contains("tcp://[2001:db8::10]:7443?max-tcp-carriers=3"))
@@ -251,7 +262,7 @@ class MppConfigRendererTest {
             MppPathConfig(
                 name = "wifi-primary",
                 endpoint = "tcp://wifi.example:7000-7999?max-tcp-carriers=4&" +
-                        "port-rotation-interval-ms=45000",
+                        "port-rotation-interval-s=45",
             ),
             MppPathConfig(
                 name = "mobile-quic",
@@ -281,7 +292,7 @@ class MppConfigRendererTest {
     fun projectionJsonUsesTheVersionedNativeContract() {
         val projection = MppEditorProjection.from(legacyConfig(), "server.example.com")
         val json = MppEditorJson.encode(projection)
-        assertTrue(json.contains("\"schema_version\":1"))
+        assertTrue(json.contains("\"schema_version\":2"))
         assertTrue(json.contains("\"log_level\":\"info\""))
         assertTrue(json.contains("\"target_resolution\":null"))
         assertTrue(json.contains("\"credential_id\":"))

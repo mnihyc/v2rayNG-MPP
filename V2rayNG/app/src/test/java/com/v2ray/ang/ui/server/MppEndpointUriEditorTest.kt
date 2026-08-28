@@ -32,26 +32,26 @@ class MppEndpointUriEditorTest {
 
     @Test
     fun scalarEditChangesOnlyItsCanonicalTarget() {
-        val uri = "tcp://edge.example:443?backup=true&initial-srtt-ms=+20&" +
+        val uri = "tcp://edge.example:443?backup=true&initial-srtt-s=+0.020&" +
                 "initial-rate-bps=+1000&expensive=false&control-only=true"
 
         assertEquals(
-            "tcp://edge.example:443?backup=true&initial-srtt-ms=30&" +
+            "tcp://edge.example:443?backup=true&initial-srtt-s=0.030&" +
                     "initial-rate-bps=+1000&expensive=false&control-only=true",
-            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-ms", "30"),
+            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-s", "0.030"),
         )
         assertEquals(
             "tcp://edge.example:443?backup=true&initial-rate-bps=+1000&" +
                     "expensive=false&control-only=true",
-            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-ms", null),
+            MppEndpointUriEditor.withScalarOption(uri, "initial-srtt-s", null),
         )
         assertEquals(
-            "$uri&initial-rttvar-ms=5",
-            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-ms", "5"),
+            "$uri&initial-rttvar-s=0.005",
+            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-s", "0.005"),
         )
         assertEquals(
             uri,
-            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-ms", null),
+            MppEndpointUriEditor.withScalarOption(uri, "initial-rttvar-s", null),
         )
     }
 
@@ -59,20 +59,20 @@ class MppEndpointUriEditorTest {
     fun transportChangeDropsOnlyOptionsInapplicableToItsTarget() {
         val tcp = "tcp://edge.example:7000-7999?backup=true&max-tcp-carriers=5&" +
                 "initial-rate-mbps=25&allow-datagrams=false&" +
-                "port-rotation-interval-ms=45000&control-only=true"
+                "port-rotation-interval-s=45&control-only=true"
 
         val quic = MppEndpointUriEditor.withUnderlay(tcp, MppPathUnderlay.QUIC)
 
         assertEquals(
             "quic://edge.example:7000-7999?backup=true&initial-rate-mbps=25&" +
-                    "port-rotation-interval-ms=45000&control-only=true",
+                    "port-rotation-interval-s=45&control-only=true",
             quic,
         )
         assertEquals(tcp, MppEndpointUriEditor.withUnderlay(tcp, MppPathUnderlay.TCP))
         assertEquals(MppPathUnderlay.QUIC, MppPathParser.parse(quic!!)!!.underlay)
 
-        val quicWithPayload =
-            "quic://edge.example:7443?max-datagram-payload-bytes=1400&backup=false"
+        val quicWithPayload = "quic://edge.example:7443?" +
+                "max-datagram-payload-bytes=1400&loss-compensation-percent=10&backup=false"
         assertEquals(
             "tcp://edge.example:7443?backup=false",
             MppEndpointUriEditor.withUnderlay(quicWithPayload, MppPathUnderlay.TCP),
@@ -97,8 +97,15 @@ class MppEndpointUriEditorTest {
         assertNull(
             MppEndpointUriEditor.withScalarOption(
                 quic,
-                "port-rotation-interval-ms",
-                "300000",
+                "port-rotation-interval-s",
+                "300",
+            )
+        )
+        assertNull(
+            MppEndpointUriEditor.withScalarOption(
+                tcp,
+                "loss-compensation-percent",
+                "10",
             )
         )
         assertNull(
@@ -202,7 +209,7 @@ class MppEndpointUriEditorTest {
         assertNull(MppEndpointUriEditor.withUnderlay(invalid, MppPathUnderlay.QUIC))
         assertNull(MppEndpointUriEditor.withHost(invalid, "other.example"))
         assertNull(MppEndpointUriEditor.withPorts(invalid, "443"))
-        assertNull(MppEndpointUriEditor.withScalarOption(invalid, "initial-srtt-ms", "10"))
+        assertNull(MppEndpointUriEditor.withScalarOption(invalid, "initial-srtt-s", "0.01"))
         assertNull(MppEndpointUriEditor.withBooleanOption(invalid, "backup", true))
         assertNull(MppEndpointUriEditor.withRateOption(invalid, "initial-rate-mbps", "10"))
 

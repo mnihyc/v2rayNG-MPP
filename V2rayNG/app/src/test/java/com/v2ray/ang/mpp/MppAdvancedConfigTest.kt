@@ -18,11 +18,18 @@ class MppAdvancedConfigTest {
         val template = MppConfigRenderer.renderEditableTemplate("edge.example", config)
 
         assertFalse(template.contains("[session]"))
-        assertFalse(template.contains("retention_timeout_ms"))
+        assertFalse(template.contains("retention_timeout_s"))
         assertFalse(template.contains("[resources]"))
-        assertFalse(template.contains("path_probe_interval_ms"))
+        assertFalse(template.contains("path_probe_interval_s"))
         assertFalse(template.contains("[outbounds.performance]"))
-        assertFalse(template.contains("auth_freshness_window_seconds"))
+        assertTrue(
+            template.contains(
+                "# performance = { optional_reinjection_budget_percent = 20, " +
+                        "quic_loss_compensation_percent = 5 } # overrides [flow]; " +
+                        "path URI wins for loss"
+            )
+        )
+        assertFalse(template.contains("auth_freshness_window_s"))
         assertNull(MppEditorProjection.from(config, "edge.example").advanced)
         assertNull(MppProfileValidator.validate(config))
     }
@@ -37,53 +44,53 @@ class MppAdvancedConfigTest {
             template.contains(
                 """
                 [session]
-                retention_timeout_ms = 300000
+                retention_timeout_s = 300
 
                 [resources]
-                tcp_path_heartbeat_interval_ms = 10000
-                tcp_path_heartbeat_timeout_ms = 30000
-                quic_path_keep_alive_interval_ms = 10000
-                quic_path_idle_timeout_ms = 30000
+                tcp_path_heartbeat_interval_s = 10
+                tcp_path_heartbeat_timeout_s = 30
+                quic_path_keep_alive_interval_s = 10
+                quic_path_idle_timeout_s = 30
                 """.trimIndent()
             )
         )
-        assertTrue(template.contains("path_probe_interval_ms = 10000"))
-        assertTrue(template.contains("path_probe_timeout_ms = 2000"))
+        assertTrue(template.contains("path_probe_interval_s = 10"))
+        assertTrue(template.contains("path_probe_timeout_s = 2"))
         assertTrue(
             template.contains(
-                "[outbounds.performance]\nextra_traffic_hint_percent = 5"
+                "[outbounds.performance]\noptional_reinjection_budget_percent = 10"
             )
         )
-        assertTrue(template.contains("auth_freshness_window_seconds = 300"))
+        assertTrue(template.contains("auth_freshness_window_s = 300"))
         assertNull(MppProfileValidator.validate(config))
     }
 
     @Test
     fun customExpertValuesRenderExactlyInNativeTomlLocations() {
         val advanced = MppAdvancedConfig(
-            pathProbeIntervalMs = 12_345L,
-            pathProbeTimeoutMs = 3_456L,
-            extraTrafficHintPercent = 321,
-            authFreshnessWindowSeconds = 654L,
-            sessionRetentionTimeoutMs = 456_789L,
-            tcpHeartbeatIntervalMs = 4_000L,
-            tcpHeartbeatTimeoutMs = 9_000L,
-            quicKeepAliveIntervalMs = 5_000L,
-            quicIdleTimeoutMs = 15_000L,
+            pathProbeIntervalS = 12.345,
+            pathProbeTimeoutS = 3.456,
+            optionalReinjectionBudgetPercent = 321,
+            authFreshnessWindowS = 654.0,
+            sessionRetentionTimeoutS = 456.789,
+            tcpHeartbeatIntervalS = 4.0,
+            tcpHeartbeatTimeoutS = 9.0,
+            quicKeepAliveIntervalS = 5.0,
+            quicIdleTimeoutS = 15.0,
         )
         val config = validConfig().copy(advanced = advanced)
 
         val template = MppConfigRenderer.renderEditableTemplate("edge.example", config)
 
-        assertTrue(template.contains("[session]\nretention_timeout_ms = 456789"))
+        assertTrue(template.contains("[session]\nretention_timeout_s = 456.789"))
         assertTrue(
             template.contains(
                 """
                 [resources]
-                tcp_path_heartbeat_interval_ms = 4000
-                tcp_path_heartbeat_timeout_ms = 9000
-                quic_path_keep_alive_interval_ms = 5000
-                quic_path_idle_timeout_ms = 15000
+                tcp_path_heartbeat_interval_s = 4
+                tcp_path_heartbeat_timeout_s = 9
+                quic_path_keep_alive_interval_s = 5
+                quic_path_idle_timeout_s = 15
                 """.trimIndent()
             )
         )
@@ -92,21 +99,21 @@ class MppAdvancedConfigTest {
                 """
                 name = "remote-mpp"
                 protocol = "mpp"
-                path_probe_interval_ms = 12345
-                path_probe_timeout_ms = 3456
+                path_probe_interval_s = 12.345
+                path_probe_timeout_s = 3.456
                 paths = [
                 """.trimIndent()
             )
         )
         assertTrue(
             template.contains(
-                "[outbounds.performance]\nextra_traffic_hint_percent = 321"
+                "[outbounds.performance]\noptional_reinjection_budget_percent = 321"
             )
         )
         assertTrue(
             template.contains(
                 "credential_id = \"android-client\"\n" +
-                        "auth_freshness_window_seconds = 654"
+                        "auth_freshness_window_s = 654"
             )
         )
         assertNull(MppProfileValidator.validate(config))
@@ -116,28 +123,28 @@ class MppAdvancedConfigTest {
     fun everyNativeAdvancedConstraintIsValidatedBeforeSave() {
         val defaults = MppAdvancedConfig()
         val invalidValues = listOf(
-            defaults.copy(pathProbeIntervalMs = 0L),
-            defaults.copy(pathProbeTimeoutMs = 0L),
-            defaults.copy(extraTrafficHintPercent = -1),
+            defaults.copy(pathProbeIntervalS = 0.0),
+            defaults.copy(pathProbeTimeoutS = 0.0),
+            defaults.copy(optionalReinjectionBudgetPercent = -1),
             defaults.copy(
-                extraTrafficHintPercent =
-                MppAdvancedConfig.MAX_EXTRA_TRAFFIC_HINT_PERCENT + 1
+                optionalReinjectionBudgetPercent =
+                MppAdvancedConfig.MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT + 1
             ),
-            defaults.copy(authFreshnessWindowSeconds = 0L),
-            defaults.copy(sessionRetentionTimeoutMs = 0L),
-            defaults.copy(tcpHeartbeatIntervalMs = 0L),
+            defaults.copy(authFreshnessWindowS = 0.0),
+            defaults.copy(authFreshnessWindowS = 0.5),
+            defaults.copy(sessionRetentionTimeoutS = 0.0),
+            defaults.copy(tcpHeartbeatIntervalS = 0.0),
             defaults.copy(
-                tcpHeartbeatIntervalMs = 10_000L,
-                tcpHeartbeatTimeoutMs = 9_999L,
+                tcpHeartbeatIntervalS = 10.0,
+                tcpHeartbeatTimeoutS = 9.999,
             ),
-            defaults.copy(quicKeepAliveIntervalMs = 0L),
+            defaults.copy(quicKeepAliveIntervalS = 0.0),
             defaults.copy(
-                quicKeepAliveIntervalMs = 10_000L,
-                quicIdleTimeoutMs = 10_000L,
+                quicKeepAliveIntervalS = 10.0,
+                quicIdleTimeoutS = 10.0,
             ),
-            defaults.copy(
-                quicIdleTimeoutMs = MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS + 1L
-            ),
+            defaults.copy(quicIdleTimeoutS = Double.POSITIVE_INFINITY),
+            defaults.copy(pathProbeIntervalS = Double.NaN),
         )
 
         invalidValues.forEach { advanced ->
@@ -152,19 +159,20 @@ class MppAdvancedConfigTest {
     @Test
     fun inclusiveNativeBoundariesRemainAvailableToExpertProfiles() {
         val lowerBudget = MppAdvancedConfig(
-            pathProbeIntervalMs = 1L,
-            pathProbeTimeoutMs = 1L,
-            extraTrafficHintPercent = 0,
-            authFreshnessWindowSeconds = 1L,
-            sessionRetentionTimeoutMs = 1L,
-            tcpHeartbeatIntervalMs = 1L,
-            tcpHeartbeatTimeoutMs = 1L,
-            quicKeepAliveIntervalMs = 1L,
-            quicIdleTimeoutMs = 2L,
+            pathProbeIntervalS = 0.001,
+            pathProbeTimeoutS = 0.001,
+            optionalReinjectionBudgetPercent = 0,
+            authFreshnessWindowS = 1.0,
+            sessionRetentionTimeoutS = 0.001,
+            tcpHeartbeatIntervalS = 0.001,
+            tcpHeartbeatTimeoutS = 0.001,
+            quicKeepAliveIntervalS = 0.001,
+            quicIdleTimeoutS = 0.002,
         )
         val upperBudget = lowerBudget.copy(
-            extraTrafficHintPercent = MppAdvancedConfig.MAX_EXTRA_TRAFFIC_HINT_PERCENT,
-            quicIdleTimeoutMs = MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS,
+            optionalReinjectionBudgetPercent =
+            MppAdvancedConfig.MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT,
+            quicIdleTimeoutS = MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_S,
         )
 
         assertNull(MppProfileValidator.validate(validConfig().copy(advanced = lowerBudget)))
@@ -182,8 +190,8 @@ class MppAdvancedConfigTest {
 
         val original = validConfig().copy(
             advanced = MppAdvancedConfig(
-                pathProbeIntervalMs = 25_000L,
-                extraTrafficHintPercent = 42,
+                pathProbeIntervalS = 25.0,
+                optionalReinjectionBudgetPercent = 42,
             )
         )
         val restored = gson.fromJson(gson.toJson(original), MppProfileConfig::class.java)
@@ -191,10 +199,28 @@ class MppAdvancedConfigTest {
     }
 
     @Test
+    fun schemaTwoProjectionUsesOnlySecondsAndTheRenamedBudget() {
+        val projection = MppEditorProjection.from(
+            validConfig().copy(advanced = MppAdvancedConfig(pathProbeTimeoutS = 2.125)),
+            "edge.example",
+        )
+
+        val json = MppEditorJson.encode(projection)
+
+        assertTrue(json.contains("\"schema_version\":2"))
+        assertTrue(json.contains("\"path_probe_timeout_s\":2.125"))
+        assertTrue(json.contains("\"optional_reinjection_budget_percent\":10"))
+        assertTrue(json.contains("\"auth_freshness_window_s\":300.0"))
+        assertFalse(json.contains("_ms\""))
+        assertFalse(json.contains("_seconds\""))
+        assertFalse(json.contains("extra_traffic_hint_percent"))
+    }
+
+    @Test
     fun rawTomlRemainsTheAuthoritativeExpertEscapeHatch() {
         val base = validConfig()
         val template = MppConfigRenderer.renderEditableTemplate("edge.example", base)
-        val staleInvalidStructuredTuning = MppAdvancedConfig(pathProbeIntervalMs = 0L)
+        val staleInvalidStructuredTuning = MppAdvancedConfig(pathProbeIntervalS = 0.0)
 
         assertNull(
             MppProfileValidator.validate(

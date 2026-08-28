@@ -13,8 +13,8 @@ class MppPathParserTest {
     fun parsesCompleteCanonicalTcpAndQuicGrammar() {
         val parsedTcp = MppPathParser.parse(
             "tcp://edge.example:7000-7999?source-address=192.0.2.10&" +
-                    "initial-srtt-ms=20&initial-rttvar-ms=5&initial-rate-mbps=30&" +
-                    "max-tcp-carriers=5&port-rotation-interval-ms=45000&" +
+                    "initial-srtt-s=0.020&initial-rttvar-s=0.005&initial-rate-mbps=30&" +
+                    "max-tcp-carriers=5&port-rotation-interval-s=45&" +
                     "backup=true&expensive=false&allow-bulk=false&control-only=true&" +
                     "allow-datagrams=false"
         )
@@ -30,7 +30,8 @@ class MppPathParserTest {
         assertEquals("allow-datagrams", tcp.options.last().key)
 
         val parsedQuic = MppPathParser.parse(
-            "quic://[2001:db8::10]:7443?initial-rttvar-ms=0&" +
+            "quic://[2001:db8::10]:7443?initial-rttvar-s=0&" +
+                    "loss-compensation-percent=10.125&" +
                     "initial-rate=unlimited&max-datagram-payload-bytes=65000&" +
                     "backup=false&expensive=true&allow-bulk=true&control-only=false"
         )
@@ -43,19 +44,20 @@ class MppPathParserTest {
     }
 
     @Test
-    fun queryVocabularyMatchesTheNativeFifteenKeys() {
+    fun queryVocabularyMatchesTheNativeSixteenKeys() {
         assertEquals(
             listOf(
                 "source-address",
-                "initial-srtt-ms",
-                "initial-rttvar-ms",
+                "initial-srtt-s",
+                "initial-rttvar-s",
                 "initial-rate-bps",
                 "initial-rate-kbps",
                 "initial-rate-mbps",
                 "initial-rate",
+                "loss-compensation-percent",
                 "max-datagram-payload-bytes",
                 "max-tcp-carriers",
-                "port-rotation-interval-ms",
+                "port-rotation-interval-s",
                 "backup",
                 "expensive",
                 "allow-bulk",
@@ -98,8 +100,11 @@ class MppPathParserTest {
             "tcp://edge.example:443?unknown=true",
             "tcp://edge.example:443?source-address=01.2.3.4",
             "tcp://edge.example:443?source-address=not-an-ip",
-            "tcp://edge.example:443?initial-srtt-ms=0",
-            "tcp://edge.example:443?initial-srtt-ms=1&initial-srtt-ms=2",
+            "tcp://edge.example:443?initial-srtt-s=0",
+            "tcp://edge.example:443?initial-srtt-s=0.001&initial-srtt-s=0.002",
+            "tcp://edge.example:443?loss-compensation-percent=10",
+            "quic://edge.example:443?loss-compensation-percent=100",
+            "quic://edge.example:443?loss-compensation-percent=1.23456",
             "tcp://edge.example:443?initial-rate-bps=1&initial-rate=unknown",
             "tcp://edge.example:443?initial-rate-mbps=18446744073710",
             "tcp://edge.example:443?max-tcp-carriers=0",
@@ -111,9 +116,10 @@ class MppPathParserTest {
             "quic://edge.example:443?allow-datagrams=false",
             "quic://edge.example:443?max-datagram-payload-bytes=511",
             "quic://edge.example:443?max-datagram-payload-bytes=65001",
-            "tcp://edge.example:443?port-rotation-interval-ms=5000",
-            "quic://edge.example:443?port-rotation-interval-ms=5000",
-            "quic://edge.example:443-444?port-rotation-interval-ms=4999",
+            "tcp://edge.example:443?port-rotation-interval-s=5",
+            "quic://edge.example:443?port-rotation-interval-s=5",
+            "quic://edge.example:443-444?port-rotation-interval-s=4.999",
+            "quic://edge.example:443?initial-srtt-s=0.0005",
         )
         invalid.forEach { endpoint -> assertNull(endpoint, MppPathParser.parse(endpoint)) }
 
@@ -137,17 +143,18 @@ class MppPathParserTest {
     @Test
     fun acceptsNativeNumericBoundariesAndDefaults() {
         assertNotNull(MppPathParser.parse("tcp://edge.example:443?initial-rate-bps=+1"))
-        assertNotNull(MppPathParser.parse("tcp://edge.example:443?initial-rttvar-ms=000"))
+        assertNotNull(MppPathParser.parse("tcp://edge.example:443?initial-rttvar-s=000"))
         assertNotNull(
             MppPathParser.parse(
-                "tcp://edge.example:443?initial-srtt-ms=4294967295&" +
+                "tcp://edge.example:443?initial-srtt-s=4294967.295&" +
                         "initial-rate-bps=18446744073709551615&max-tcp-carriers=65535"
             )
         )
         assertNotNull(
             MppPathParser.parse(
                 "quic://edge.example:443-444?max-datagram-payload-bytes=512&" +
-                        "port-rotation-interval-ms=4294967295"
+                        "port-rotation-interval-s=4294967.295&" +
+                        "loss-compensation-percent=99.9999"
             )
         )
         assertEquals(
@@ -160,6 +167,8 @@ class MppPathParserTest {
     fun rejectsEveryPreviousOptionSpelling() {
         val previousKeys = listOf(
             "source-ip",
+            "initial-srtt-ms",
+            "initial-rttvar-ms",
             "srtt-ms",
             "jitter-ms",
             "rate-bps",
@@ -169,6 +178,7 @@ class MppPathParserTest {
             "datagram-payload-limit",
             "tcp-carriers",
             "port-hop-interval-ms",
+            "port-rotation-interval-ms",
             "bulk-allowed",
             "probe-only",
             "no-udp",

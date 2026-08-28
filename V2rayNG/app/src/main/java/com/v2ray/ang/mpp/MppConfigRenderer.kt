@@ -51,6 +51,24 @@ object MppConfigRenderer {
             appendLine("[logging]")
             appendLine("level = ${tomlString(config.logLevel)}")
             appendLine()
+            appendLine("[flow]")
+            appendLine("# TCP streams and UDP associations idle on application payload; 0 disables.")
+            appendLine("idle_timeout_s = 300")
+            appendLine("# Optional reliable MPP reinjection; control/probes/native recovery are excluded.")
+            appendLine("optional_reinjection_budget_percent = 10")
+            appendLine("# Sender-side QUIC loss correction; a path URI value takes precedence.")
+            appendLine("quic_loss_compensation_percent = 10")
+            appendLine()
+            appendLine("[admission]")
+            appendLine("max_live_flows = 4096")
+            appendLine("max_concurrent_work = 4096")
+            appendLine("max_live_flows_per_principal = 4096")
+            appendLine("max_live_flows_per_outbound = 4096")
+            appendLine("max_connects_per_outbound = 4096")
+            appendLine("max_live_flows_per_target = 4096")
+            appendLine("max_connects_per_target = 4096")
+            appendLine("max_dns_work = 4096")
+            appendLine()
             if (managementToken != null) {
                 appendLine("[management]")
                 appendLine("listen = [${tomlString(MANAGEMENT_LISTEN)}]")
@@ -68,13 +86,13 @@ object MppConfigRenderer {
             appendLine()
             if (advanced != null) {
                 appendLine("[session]")
-                appendLine("retention_timeout_ms = ${advanced.sessionRetentionTimeoutMs}")
+                appendLine("retention_timeout_s = ${tomlNumber(advanced.sessionRetentionTimeoutS)}")
                 appendLine()
                 appendLine("[resources]")
-                appendLine("tcp_path_heartbeat_interval_ms = ${advanced.tcpHeartbeatIntervalMs}")
-                appendLine("tcp_path_heartbeat_timeout_ms = ${advanced.tcpHeartbeatTimeoutMs}")
-                appendLine("quic_path_keep_alive_interval_ms = ${advanced.quicKeepAliveIntervalMs}")
-                appendLine("quic_path_idle_timeout_ms = ${advanced.quicIdleTimeoutMs}")
+                appendLine("tcp_path_heartbeat_interval_s = ${tomlNumber(advanced.tcpHeartbeatIntervalS)}")
+                appendLine("tcp_path_heartbeat_timeout_s = ${tomlNumber(advanced.tcpHeartbeatTimeoutS)}")
+                appendLine("quic_path_keep_alive_interval_s = ${tomlNumber(advanced.quicKeepAliveIntervalS)}")
+                appendLine("quic_path_idle_timeout_s = ${tomlNumber(advanced.quicIdleTimeoutS)}")
                 appendLine()
             }
             appendLine("[[inbounds]]")
@@ -83,12 +101,18 @@ object MppConfigRenderer {
             appendLine("listen = [${tomlString("127.0.0.1:$SOCKS_PORT_TOKEN")}]")
             appendLine("# $LOCAL_USER_BINDING_TOKEN")
             appendLine()
+            appendLine("[inbounds.admission]")
+            appendLine("max_connections = 4096")
+            appendLine("max_connections_per_source = 4096")
+            appendLine("max_connections_per_principal = 4096")
+            appendLine("handshake_timeout_s = 10")
+            appendLine()
             appendLine("[[outbounds]]")
             appendLine("name = \"remote-mpp\"")
             appendLine("protocol = \"mpp\"")
             if (advanced != null) {
-                appendLine("path_probe_interval_ms = ${advanced.pathProbeIntervalMs}")
-                appendLine("path_probe_timeout_ms = ${advanced.pathProbeTimeoutMs}")
+                appendLine("path_probe_interval_s = ${tomlNumber(advanced.pathProbeIntervalS)}")
+                appendLine("path_probe_timeout_s = ${tomlNumber(advanced.pathProbeTimeoutS)}")
             }
             appendLine("paths = [")
             paths.forEachIndexed { index, path ->
@@ -98,16 +122,24 @@ object MppConfigRenderer {
             }
             appendLine("]")
             appendLine()
+            appendLine(
+                "# performance = { optional_reinjection_budget_percent = 20, " +
+                        "quic_loss_compensation_percent = 5 } # overrides [flow]; " +
+                        "path URI wins for loss"
+            )
             if (advanced != null) {
                 appendLine("[outbounds.performance]")
-                appendLine("extra_traffic_hint_percent = ${advanced.extraTrafficHintPercent}")
+                appendLine(
+                    "optional_reinjection_budget_percent = " +
+                            advanced.optionalReinjectionBudgetPercent
+                )
                 appendLine()
             }
             appendLine("[outbounds.security]")
             appendLine("credential_id = ${tomlString(config.credentialId)}")
             if (advanced != null) {
                 appendLine(
-                    "auth_freshness_window_seconds = ${advanced.authFreshnessWindowSeconds}"
+                    "auth_freshness_window_s = ${tomlNumber(advanced.authFreshnessWindowS)}"
                 )
             }
             if (config.tlsServerName.isNotBlank()) {
@@ -177,6 +209,11 @@ object MppConfigRenderer {
 
     private fun managedRef(id: String): String =
         "{ from = \"managed\", id = ${tomlString(id)} }"
+
+    private fun tomlNumber(value: Double): String {
+        require(value.isFinite() && value >= 0.0) { "MPP duration must be finite and non-negative" }
+        return value.toBigDecimal().stripTrailingZeros().toPlainString()
+    }
 
     private fun tomlString(value: String): String = buildString {
         append('"')

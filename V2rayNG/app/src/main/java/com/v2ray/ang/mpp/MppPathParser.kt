@@ -1,5 +1,6 @@
 package com.v2ray.ang.mpp
 
+import java.math.BigDecimal
 import java.math.BigInteger
 import java.net.InetAddress
 
@@ -34,19 +35,20 @@ data class MppParsedPath(
 /** Strict Android mirror of MPTUNNEL's current client `PathSpec` text grammar. */
 object MppPathParser {
     const val DEFAULT_TCP_CARRIER_MAX = 3
-    const val DEFAULT_PORT_ROTATION_INTERVAL_MS = 300_000L
+    const val DEFAULT_PORT_ROTATION_INTERVAL_S = 300.0
 
     val QUERY_KEYS: List<String> = listOf(
         "source-address",
-        "initial-srtt-ms",
-        "initial-rttvar-ms",
+        "initial-srtt-s",
+        "initial-rttvar-s",
         "initial-rate-bps",
         "initial-rate-kbps",
         "initial-rate-mbps",
         "initial-rate",
+        "loss-compensation-percent",
         "max-datagram-payload-bytes",
         "max-tcp-carriers",
-        "port-rotation-interval-ms",
+        "port-rotation-interval-s",
         "backup",
         "expensive",
         "allow-bulk",
@@ -54,13 +56,14 @@ object MppPathParser {
         "allow-datagrams",
     )
 
-    private const val MIN_PORT_ROTATION_INTERVAL_MS = 5_000L
+    private val MIN_PORT_ROTATION_INTERVAL_MS = BigInteger.valueOf(5_000L)
     private val U16_MAX = BigInteger.valueOf(65_535)
     private val U32_MAX = BigInteger("4294967295")
     private val U64_MAX = BigInteger("18446744073709551615")
     private val policyId = Regex("[a-z0-9][a-z0-9._-]{0,63}")
     private val canonicalPort = Regex("[1-9][0-9]*")
     private val unsignedInteger = Regex("\\+?[0-9]+")
+    private val exactLossPercent = Regex("[0-9]+(?:\\.[0-9]{1,4})?")
 
     fun isCanonicalName(name: String): Boolean = policyId.matches(name)
 
@@ -86,6 +89,7 @@ object MppPathParser {
         var maxDatagramPayloadPresent = false
         var portRotationPresent = false
         var allowDatagramsPresent = false
+        var lossCompensationPresent = false
 
         for (option in options) {
             val key = option.key
@@ -93,11 +97,11 @@ object MppPathParser {
             if (!seen.add(key)) return null
             when (key) {
                 "source-address" -> if (!isIpAddress(value)) return null
-                "initial-srtt-ms" -> {
-                    val parsed = parseUnsigned(value, U32_MAX) ?: return null
+                "initial-srtt-s" -> {
+                    val parsed = parseExactMilliseconds(value) ?: return null
                     if (parsed == BigInteger.ZERO) return null
                 }
-                "initial-rttvar-ms" -> if (parseUnsigned(value, U32_MAX) == null) return null
+                "initial-rttvar-s" -> if (parseExactMilliseconds(value) == null) return null
                 "initial-rate-bps", "initial-rate-kbps", "initial-rate-mbps" -> {
                     if (rateSeen) return null
                     rateSeen = true
@@ -114,6 +118,10 @@ object MppPathParser {
                     if (rateSeen || value !in setOf("unknown", "unlimited")) return null
                     rateSeen = true
                 }
+                "loss-compensation-percent" -> {
+                    if (!isExactLossCompensationPercent(value)) return null
+                    lossCompensationPresent = true
+                }
                 "max-datagram-payload-bytes" -> {
                     val parsed = parseUnsigned(value, U16_MAX)?.toInt() ?: return null
                     if (parsed !in 512..65_000) return null
@@ -125,8 +133,8 @@ object MppPathParser {
                     tcpCarrierMax = parsed
                     maxTcpCarriersPresent = true
                 }
-                "port-rotation-interval-ms" -> {
-                    val parsed = parseUnsigned(value, U32_MAX)?.toLong() ?: return null
+                "port-rotation-interval-s" -> {
+                    val parsed = parseExactMilliseconds(value) ?: return null
                     if (parsed < MIN_PORT_ROTATION_INTERVAL_MS) return null
                     portRotationPresent = true
                 }
@@ -141,7 +149,11 @@ object MppPathParser {
         if (underlay == MppPathUnderlay.QUIC && (maxTcpCarriersPresent || allowDatagramsPresent)) {
             return null
         }
-        if (underlay == MppPathUnderlay.TCP && maxDatagramPayloadPresent) return null
+        if (underlay == MppPathUnderlay.TCP &&
+            (maxDatagramPayloadPresent || lossCompensationPresent)
+        ) {
+            return null
+        }
         if (portRotationPresent && parsedAuthority.firstPort == parsedAuthority.lastPort) return null
         return MppParsedPath(
             underlay = underlay,
@@ -206,6 +218,22 @@ object MppPathParser {
     private fun parseUnsigned(value: String, maximum: BigInteger): BigInteger? {
         if (!unsignedInteger.matches(value)) return null
         return runCatching { BigInteger(value) }.getOrNull()?.takeIf { it <= maximum }
+    }
+
+    /** Native second-valued path hints retain exact millisecond runtime precision. */
+    private fun parseExactMilliseconds(value: String): BigInteger? {
+        val seconds = runCatching { BigDecimal(value) }.getOrNull() ?: return null
+        if (seconds.signum() < 0) return null
+        val milliseconds = runCatching {
+            seconds.movePointRight(3).toBigIntegerExact()
+        }.getOrNull() ?: return null
+        return milliseconds.takeIf { it <= U32_MAX }
+    }
+
+    private fun isExactLossCompensationPercent(value: String): Boolean {
+        if (!exactLossPercent.matches(value)) return false
+        val percent = runCatching { BigDecimal(value) }.getOrNull() ?: return false
+        return percent < BigDecimal("100")
     }
 
     private fun isIpAddress(value: String): Boolean =

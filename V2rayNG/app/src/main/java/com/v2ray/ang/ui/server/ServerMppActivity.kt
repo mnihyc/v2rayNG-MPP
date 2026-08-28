@@ -127,7 +127,7 @@ class ServerMppActivity : BaseServerActivity() {
             toast(R.string.server_mpp_error_path_required)
             return false
         }
-        if (mpp.editorSchemaVersion == MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
+        if (MppProfileConfig.usesCanonicalMaterialEncoding(mpp.editorSchemaVersion) &&
             mpp.useRawToml
         ) {
             // Full-TOML mode is the operator authority. Save checks only the document boundary;
@@ -180,6 +180,7 @@ class ServerMppActivity : BaseServerActivity() {
         if (error == null) return true
         toast(
             when (error) {
+                MppValidationError.EDITOR_SCHEMA -> R.string.server_mpp_error_editor_schema
                 MppValidationError.LOG_LEVEL -> R.string.server_mpp_error_log_level
                 MppValidationError.TARGET_RESOLUTION ->
                     R.string.server_mpp_error_target_resolution
@@ -218,13 +219,23 @@ class ServerMppActivity : BaseServerActivity() {
     @Composable
     private fun MppProtocolFields(state: ServerUiState) {
         val config = state.mppConfig
+        val rawTomlLocked =
+            config.editorSchemaVersion == MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION
         SettingsSwitchItem(
             title = stringResource(R.string.server_mpp_use_raw_toml),
             checked = config.useRawToml,
+            summary = if (rawTomlLocked) {
+                stringResource(R.string.server_mpp_schema_one_raw_locked)
+            } else {
+                null
+            },
+            enabled = !rawTomlLocked,
             onCheckedChange = { enabled ->
-                if (enabled) {
-                    state.mppConfig = config.copy(useRawToml = true)
+                val modeUpdated = config.withRawTomlMode(enabled)
+                if (modeUpdated.useRawToml) {
+                    state.mppConfig = modeUpdated
                 } else {
+                    state.mppConfig = modeUpdated
                     runCatching { projectCanonicalEditor(state) }
                         .onFailure { toast(R.string.server_mpp_error_raw_toml) }
                 }
@@ -485,43 +496,43 @@ class ServerMppActivity : BaseServerActivity() {
         // edits are committed immediately; an incomplete or overflowing value stays visible until
         // the user finishes correcting it instead of snapping back to the previous number.
         var probeInterval by rememberSaveable {
-            mutableStateOf(resolved.pathProbeIntervalMs.toString())
+            mutableStateOf(resolved.pathProbeIntervalS.toMppSecondsText())
         }
         var probeTimeout by rememberSaveable {
-            mutableStateOf(resolved.pathProbeTimeoutMs.toString())
+            mutableStateOf(resolved.pathProbeTimeoutS.toMppSecondsText())
         }
-        var extraTraffic by rememberSaveable {
-            mutableStateOf(resolved.extraTrafficHintPercent.toString())
+        var reinjectionBudget by rememberSaveable {
+            mutableStateOf(resolved.optionalReinjectionBudgetPercent.toString())
         }
         var authFreshness by rememberSaveable {
-            mutableStateOf(resolved.authFreshnessWindowSeconds.toString())
+            mutableStateOf(resolved.authFreshnessWindowS.toMppSecondsText())
         }
         var sessionRetention by rememberSaveable {
-            mutableStateOf(resolved.sessionRetentionTimeoutMs.toString())
+            mutableStateOf(resolved.sessionRetentionTimeoutS.toMppSecondsText())
         }
         var tcpHeartbeatInterval by rememberSaveable {
-            mutableStateOf(resolved.tcpHeartbeatIntervalMs.toString())
+            mutableStateOf(resolved.tcpHeartbeatIntervalS.toMppSecondsText())
         }
         var tcpHeartbeatTimeout by rememberSaveable {
-            mutableStateOf(resolved.tcpHeartbeatTimeoutMs.toString())
+            mutableStateOf(resolved.tcpHeartbeatTimeoutS.toMppSecondsText())
         }
         var quicKeepAlive by rememberSaveable {
-            mutableStateOf(resolved.quicKeepAliveIntervalMs.toString())
+            mutableStateOf(resolved.quicKeepAliveIntervalS.toMppSecondsText())
         }
         var quicIdleTimeout by rememberSaveable {
-            mutableStateOf(resolved.quicIdleTimeoutMs.toString())
+            mutableStateOf(resolved.quicIdleTimeoutS.toMppSecondsText())
         }
 
         fun currentTextDraft() = MppAdvancedTextDraft(
-            pathProbeIntervalMs = probeInterval,
-            pathProbeTimeoutMs = probeTimeout,
-            extraTrafficHintPercent = extraTraffic,
-            authFreshnessWindowSeconds = authFreshness,
-            sessionRetentionTimeoutMs = sessionRetention,
-            tcpHeartbeatIntervalMs = tcpHeartbeatInterval,
-            tcpHeartbeatTimeoutMs = tcpHeartbeatTimeout,
-            quicKeepAliveIntervalMs = quicKeepAlive,
-            quicIdleTimeoutMs = quicIdleTimeout,
+            pathProbeIntervalS = probeInterval,
+            pathProbeTimeoutS = probeTimeout,
+            optionalReinjectionBudgetPercent = reinjectionBudget,
+            authFreshnessWindowS = authFreshness,
+            sessionRetentionTimeoutS = sessionRetention,
+            tcpHeartbeatIntervalS = tcpHeartbeatInterval,
+            tcpHeartbeatTimeoutS = tcpHeartbeatTimeout,
+            quicKeepAliveIntervalS = quicKeepAlive,
+            quicIdleTimeoutS = quicIdleTimeout,
         )
 
         fun publishDraftValidity() {
@@ -581,12 +592,12 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             probeInterval = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(pathProbeIntervalMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(pathProbeIntervalS = parsed) }
                             }
                         },
-                        isError = !probeInterval.isPositiveLong(),
-                        keyboardType = KeyboardType.Number,
+                        isError = !probeInterval.isPositiveFiniteDouble(),
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                     CompactTextField(
@@ -595,12 +606,12 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             probeTimeout = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(pathProbeTimeoutMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(pathProbeTimeoutS = parsed) }
                             }
                         },
-                        isError = !probeTimeout.isPositiveLong(),
-                        keyboardType = KeyboardType.Number,
+                        isError = !probeTimeout.isPositiveFiniteDouble(),
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -608,17 +619,19 @@ class ServerMppActivity : BaseServerActivity() {
 
                 CompactFieldRow {
                     CompactTextField(
-                        label = stringResource(R.string.server_mpp_extra_traffic),
-                        value = extraTraffic,
+                        label = stringResource(R.string.server_mpp_reinjection_budget),
+                        value = reinjectionBudget,
                         onValueChange = { value ->
-                            extraTraffic = value
+                            reinjectionBudget = value
                             publishDraftValidity()
                             value.toIntOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(extraTrafficHintPercent = parsed) }
+                                onAdvancedUpdate {
+                                    it.copy(optionalReinjectionBudgetPercent = parsed)
+                                }
                             }
                         },
-                        isError = extraTraffic.toIntOrNull()?.let {
-                            it !in 0..MppAdvancedConfig.MAX_EXTRA_TRAFFIC_HINT_PERCENT
+                        isError = reinjectionBudget.toIntOrNull()?.let {
+                            it !in 0..MppAdvancedConfig.MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT
                         } != false,
                         keyboardType = KeyboardType.Number,
                         modifier = Modifier.weight(1f),
@@ -629,11 +642,13 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             authFreshness = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(authFreshnessWindowSeconds = parsed) }
-                            }
+                            value.toFiniteDoubleOrNull()
+                                ?.takeIf { it.isPositiveWholeSecond() }
+                                ?.let { parsed ->
+                                    onAdvancedUpdate { it.copy(authFreshnessWindowS = parsed) }
+                                }
                         },
-                        isError = !authFreshness.isPositiveLong(),
+                        isError = !authFreshness.isPositiveWholeSecond(),
                         keyboardType = KeyboardType.Number,
                         modifier = Modifier.weight(1f),
                     )
@@ -647,12 +662,12 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             sessionRetention = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(sessionRetentionTimeoutMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(sessionRetentionTimeoutS = parsed) }
                             }
                         },
-                        isError = !sessionRetention.isPositiveLong(),
-                        keyboardType = KeyboardType.Number,
+                        isError = !sessionRetention.isPositiveFiniteDouble(),
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -665,12 +680,12 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             tcpHeartbeatInterval = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(tcpHeartbeatIntervalMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(tcpHeartbeatIntervalS = parsed) }
                             }
                         },
-                        isError = !tcpHeartbeatInterval.isPositiveLong(),
-                        keyboardType = KeyboardType.Number,
+                        isError = !tcpHeartbeatInterval.isPositiveFiniteDouble(),
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                     CompactTextField(
@@ -679,17 +694,17 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             tcpHeartbeatTimeout = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(tcpHeartbeatTimeoutMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(tcpHeartbeatTimeoutS = parsed) }
                             }
                         },
-                        isError = !tcpHeartbeatTimeout.isPositiveLong() ||
-                                tcpHeartbeatTimeout.toLongOrNull()?.let { timeout ->
-                                    tcpHeartbeatInterval.toLongOrNull()?.let { interval ->
+                        isError = !tcpHeartbeatTimeout.isPositiveFiniteDouble() ||
+                                tcpHeartbeatTimeout.toFiniteDoubleOrNull()?.let { timeout ->
+                                    tcpHeartbeatInterval.toFiniteDoubleOrNull()?.let { interval ->
                                         timeout < interval
                                     }
                                 } != false,
-                        keyboardType = KeyboardType.Number,
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -702,12 +717,12 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             quicKeepAlive = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(quicKeepAliveIntervalMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(quicKeepAliveIntervalS = parsed) }
                             }
                         },
-                        isError = !quicKeepAlive.isPositiveLong(),
-                        keyboardType = KeyboardType.Number,
+                        isError = !quicKeepAlive.isPositiveFiniteDouble(),
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                     CompactTextField(
@@ -716,17 +731,17 @@ class ServerMppActivity : BaseServerActivity() {
                         onValueChange = { value ->
                             quicIdleTimeout = value
                             publishDraftValidity()
-                            value.toLongOrNull()?.let { parsed ->
-                                onAdvancedUpdate { it.copy(quicIdleTimeoutMs = parsed) }
+                            value.toFiniteDoubleOrNull()?.let { parsed ->
+                                onAdvancedUpdate { it.copy(quicIdleTimeoutS = parsed) }
                             }
                         },
-                        isError = quicIdleTimeout.toLongOrNull()?.let { timeout ->
-                            val keepAlive = quicKeepAlive.toLongOrNull()
-                            timeout <= 0L ||
-                                    timeout > MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_MS ||
+                        isError = quicIdleTimeout.toFiniteDoubleOrNull()?.let { timeout ->
+                            val keepAlive = quicKeepAlive.toFiniteDoubleOrNull()
+                            timeout <= 0.0 ||
+                                    timeout > MppAdvancedConfig.MAX_QUIC_IDLE_TIMEOUT_S ||
                                     keepAlive == null || timeout <= keepAlive
                         } != false,
-                        keyboardType = KeyboardType.Number,
+                        keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -1041,26 +1056,26 @@ class ServerMppActivity : BaseServerActivity() {
             )
             CompactTextField(
                 label = stringResource(R.string.server_mpp_port_rotation_interval),
-                value = endpoint.optionValue("port-rotation-interval-ms"),
-                onValueChange = { setScalar("port-rotation-interval-ms", it) },
+                value = endpoint.optionValue("port-rotation-interval-s"),
+                onValueChange = { setScalar("port-rotation-interval-s", it) },
                 enabled = '-' in endpoint.ports,
-                keyboardType = KeyboardType.Number,
+                keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f),
             )
         }
         CompactFieldRow {
             CompactTextField(
                 label = stringResource(R.string.server_mpp_srtt),
-                value = endpoint.optionValue("initial-srtt-ms"),
-                onValueChange = { setScalar("initial-srtt-ms", it) },
-                keyboardType = KeyboardType.Number,
+                value = endpoint.optionValue("initial-srtt-s"),
+                onValueChange = { setScalar("initial-srtt-s", it) },
+                keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f),
             )
             CompactTextField(
                 label = stringResource(R.string.server_mpp_rttvar),
-                value = endpoint.optionValue("initial-rttvar-ms"),
-                onValueChange = { setScalar("initial-rttvar-ms", it) },
-                keyboardType = KeyboardType.Number,
+                value = endpoint.optionValue("initial-rttvar-s"),
+                onValueChange = { setScalar("initial-rttvar-s", it) },
+                keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f),
             )
             if (endpoint.underlay == MppPathUnderlay.QUIC) {
@@ -1073,6 +1088,18 @@ class ServerMppActivity : BaseServerActivity() {
                 )
             } else {
                 Spacer(Modifier.weight(1.15f))
+            }
+        }
+
+        if (endpoint.underlay == MppPathUnderlay.QUIC) {
+            CompactFieldRow {
+                CompactTextField(
+                    label = stringResource(R.string.server_mpp_loss_compensation),
+                    value = endpoint.optionValue("loss-compensation-percent"),
+                    onValueChange = { setScalar("loss-compensation-percent", it) },
+                    keyboardType = KeyboardType.Decimal,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
 
@@ -1206,7 +1233,20 @@ class ServerMppActivity : BaseServerActivity() {
         )
     }
 
-    private fun String.isPositiveLong(): Boolean = toLongOrNull()?.let { it > 0L } == true
+    private fun String.toFiniteDoubleOrNull(): Double? =
+        toDoubleOrNull()?.takeIf { it.isFinite() }
+
+    private fun String.isPositiveFiniteDouble(): Boolean =
+        toFiniteDoubleOrNull()?.let { it > 0.0 } == true
+
+    private fun String.isPositiveWholeSecond(): Boolean =
+        toFiniteDoubleOrNull()?.isPositiveWholeSecond() == true
+
+    private fun Double.isPositiveWholeSecond(): Boolean =
+        isFinite() && this > 0.0 && this % 1.0 == 0.0
+
+    private fun Double.toMppSecondsText(): String =
+        toBigDecimal().stripTrailingZeros().toPlainString()
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -1370,6 +1410,24 @@ class ServerMppActivity : BaseServerActivity() {
 
     private fun initializeCanonicalEditor(state: ServerUiState) {
         val original = state.mppConfig
+        if (original.editorSchemaVersion == MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION) {
+            check(original.editorToml.isNotBlank()) {
+                "MPP editor schema 1 has no authoritative TOML"
+            }
+            // The v0.4.4 duration grammar is intentionally breaking. Preserve schema-1 text and
+            // expose it as full TOML; native finalization will identify removed keys precisely.
+            state.mppConfig = original.copy(useRawToml = true)
+            return
+        }
+        if (original.editorSchemaVersion != MppProfileConfig.LEGACY_EDITOR_SCHEMA_VERSION &&
+            original.editorSchemaVersion != MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION
+        ) {
+            check(original.editorToml.isNotBlank()) {
+                "Unsupported MPP editor schema ${original.editorSchemaVersion}"
+            }
+            state.mppConfig = original.copy(useRawToml = true)
+            return
+        }
         if (original.editorSchemaVersion != MppProfileConfig.CURRENT_EDITOR_SCHEMA_VERSION &&
             original.useRawToml && original.rawToml.isNotBlank()
         ) {

@@ -58,14 +58,15 @@ class MppExpertEditorScreenshotSeedTest {
                 MppPathConfig(
                     name = "wifi-primary",
                     endpoint = "tcp://edge-a.example:7000-7099?" +
-                            "max-tcp-carriers=4&port-rotation-interval-ms=45000&" +
-                            "initial-srtt-ms=18&initial-rttvar-ms=4&" +
+                            "max-tcp-carriers=4&port-rotation-interval-s=45&" +
+                            "initial-srtt-s=0.018&initial-rttvar-s=0.004&" +
                             "initial-rate-mbps=250&allow-bulk=true",
                 ),
                 MppPathConfig(
                     name = "mobile-quic",
                     endpoint = "quic://edge-b.example:7443?expensive=true&" +
-                            "initial-srtt-ms=55&initial-rttvar-ms=20&" +
+                            "initial-srtt-s=0.055&initial-rttvar-s=0.020&" +
+                            "loss-compensation-percent=10&" +
                             "initial-rate-mbps=60&max-datagram-payload-bytes=1350",
                 ),
                 MppPathConfig(
@@ -76,15 +77,15 @@ class MppExpertEditorScreenshotSeedTest {
                 ),
             ),
             advanced = MppAdvancedConfig(
-                pathProbeIntervalMs = 15_000L,
-                pathProbeTimeoutMs = 2_500L,
-                extraTrafficHintPercent = 12,
-                authFreshnessWindowSeconds = 240L,
-                sessionRetentionTimeoutMs = 420_000L,
-                tcpHeartbeatIntervalMs = 8_000L,
-                tcpHeartbeatTimeoutMs = 24_000L,
-                quicKeepAliveIntervalMs = 12_000L,
-                quicIdleTimeoutMs = 45_000L,
+                pathProbeIntervalS = 15.0,
+                pathProbeTimeoutS = 2.5,
+                optionalReinjectionBudgetPercent = 12,
+                authFreshnessWindowS = 240.0,
+                sessionRetentionTimeoutS = 420.0,
+                tcpHeartbeatIntervalS = 8.0,
+                tcpHeartbeatTimeoutS = 24.0,
+                quicKeepAliveIntervalS = 12.0,
+                quicIdleTimeoutS = 45.0,
             ),
             credentialId = "expert-client",
             principalId = "advanced-user",

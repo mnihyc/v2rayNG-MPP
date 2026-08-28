@@ -121,7 +121,7 @@ class MppProfileModelCompatibilityTest {
             MppPathConfig(
                 name = "fiber-primary",
                 endpoint = "tcp://edge-a.example:7000-7099" +
-                        "?max-tcp-carriers=4&port-rotation-interval-ms=30000&" +
+                        "?max-tcp-carriers=4&port-rotation-interval-s=30&" +
                         "initial-rate-mbps=900",
             ),
             MppPathConfig(
@@ -131,9 +131,9 @@ class MppProfileModelCompatibilityTest {
             ),
         )
         val advanced = MppAdvancedConfig(
-            pathProbeIntervalMs = 25_000L,
-            extraTrafficHintPercent = 42,
-            quicIdleTimeoutMs = 60_000L,
+            pathProbeIntervalS = 25.0,
+            optionalReinjectionBudgetPercent = 42,
+            quicIdleTimeoutS = 60.0,
         )
         val original = ProfileItem(
             configType = EConfigType.MPP,
@@ -194,6 +194,43 @@ class MppProfileModelCompatibilityTest {
         assertEquals(legacyRaw, restored.mppConfig.rawToml)
         assertEquals("", restored.mppConfig.editorToml)
         assertEquals(original.mpp, restored.mppConfig)
+    }
+
+    @Test
+    fun schemaOneTomlAndVersionArePreservedWithoutSecondsConversion() {
+        val schemaOneToml = """
+            # schema-one authority must remain byte-identical
+            [resources]
+            quic_path_idle_timeout_ms = 30000
+        """.trimIndent()
+        val credential = MppMaterialCodec.encodeStored(ByteArray(32) { 1 })
+        val certificate = MppMaterialCodec.encodeStored(
+            MppMaterialCodec.encodeUtf8(
+                "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----"
+            )
+        )
+        val original = ProfileItem(
+            configType = EConfigType.MPP,
+            mpp = MppProfileConfig(
+                editorSchemaVersion = MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION,
+                editorToml = schemaOneToml,
+                useRawToml = false,
+                credentialSecret = credential,
+                pinnedCertificatePem = certificate,
+            ),
+        )
+
+        val state = ServerUiState.fromProfileItem(original)
+        assertTrue(state.mppConfig.useRawToml)
+        state.mppConfig = state.mppConfig.withRawTomlMode(enabled = false)
+        val saved = requireNotNull(state.toProfileItem(original).mpp)
+
+        assertEquals(MppProfileConfig.PREVIOUS_EDITOR_SCHEMA_VERSION, saved.editorSchemaVersion)
+        assertEquals(schemaOneToml, saved.editorToml)
+        assertTrue(saved.useRawToml)
+        assertEquals(credential, saved.credentialSecret)
+        assertEquals(certificate, saved.pinnedCertificatePem)
+        assertNull(MppProfileValidator.validate(saved))
     }
 
     @Test

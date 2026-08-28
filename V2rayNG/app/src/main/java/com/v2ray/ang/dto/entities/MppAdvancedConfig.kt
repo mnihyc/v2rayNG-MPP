@@ -8,29 +8,29 @@ package com.v2ray.ang.dto.entities
  * renderer behavior they had before these controls were added.
  */
 data class MppAdvancedConfig(
-    val pathProbeIntervalMs: Long = DEFAULT_PATH_PROBE_INTERVAL_MS,
-    val pathProbeTimeoutMs: Long = DEFAULT_PATH_PROBE_TIMEOUT_MS,
-    val extraTrafficHintPercent: Int = DEFAULT_EXTRA_TRAFFIC_HINT_PERCENT,
-    val authFreshnessWindowSeconds: Long = DEFAULT_AUTH_FRESHNESS_WINDOW_SECONDS,
-    val sessionRetentionTimeoutMs: Long = DEFAULT_SESSION_RETENTION_TIMEOUT_MS,
-    val tcpHeartbeatIntervalMs: Long = DEFAULT_TCP_HEARTBEAT_INTERVAL_MS,
-    val tcpHeartbeatTimeoutMs: Long = DEFAULT_TCP_HEARTBEAT_TIMEOUT_MS,
-    val quicKeepAliveIntervalMs: Long = DEFAULT_QUIC_KEEP_ALIVE_INTERVAL_MS,
-    val quicIdleTimeoutMs: Long = DEFAULT_QUIC_IDLE_TIMEOUT_MS,
+    val pathProbeIntervalS: Double = DEFAULT_PATH_PROBE_INTERVAL_S,
+    val pathProbeTimeoutS: Double = DEFAULT_PATH_PROBE_TIMEOUT_S,
+    val optionalReinjectionBudgetPercent: Int = DEFAULT_OPTIONAL_REINJECTION_BUDGET_PERCENT,
+    val authFreshnessWindowS: Double = DEFAULT_AUTH_FRESHNESS_WINDOW_S,
+    val sessionRetentionTimeoutS: Double = DEFAULT_SESSION_RETENTION_TIMEOUT_S,
+    val tcpHeartbeatIntervalS: Double = DEFAULT_TCP_HEARTBEAT_INTERVAL_S,
+    val tcpHeartbeatTimeoutS: Double = DEFAULT_TCP_HEARTBEAT_TIMEOUT_S,
+    val quicKeepAliveIntervalS: Double = DEFAULT_QUIC_KEEP_ALIVE_INTERVAL_S,
+    val quicIdleTimeoutS: Double = DEFAULT_QUIC_IDLE_TIMEOUT_S,
 ) {
     companion object {
-        const val DEFAULT_PATH_PROBE_INTERVAL_MS = 10_000L
-        const val DEFAULT_PATH_PROBE_TIMEOUT_MS = 2_000L
-        const val DEFAULT_EXTRA_TRAFFIC_HINT_PERCENT = 5
-        const val DEFAULT_AUTH_FRESHNESS_WINDOW_SECONDS = 300L
-        const val DEFAULT_SESSION_RETENTION_TIMEOUT_MS = 300_000L
-        const val DEFAULT_TCP_HEARTBEAT_INTERVAL_MS = 10_000L
-        const val DEFAULT_TCP_HEARTBEAT_TIMEOUT_MS = 30_000L
-        const val DEFAULT_QUIC_KEEP_ALIVE_INTERVAL_MS = 10_000L
-        const val DEFAULT_QUIC_IDLE_TIMEOUT_MS = 30_000L
+        const val DEFAULT_PATH_PROBE_INTERVAL_S = 10.0
+        const val DEFAULT_PATH_PROBE_TIMEOUT_S = 2.0
+        const val DEFAULT_OPTIONAL_REINJECTION_BUDGET_PERCENT = 10
+        const val DEFAULT_AUTH_FRESHNESS_WINDOW_S = 300.0
+        const val DEFAULT_SESSION_RETENTION_TIMEOUT_S = 300.0
+        const val DEFAULT_TCP_HEARTBEAT_INTERVAL_S = 10.0
+        const val DEFAULT_TCP_HEARTBEAT_TIMEOUT_S = 30.0
+        const val DEFAULT_QUIC_KEEP_ALIVE_INTERVAL_S = 10.0
+        const val DEFAULT_QUIC_IDLE_TIMEOUT_S = 30.0
 
-        /** Maximum QUIC varint value accepted by the native idle-timeout validation. */
-        const val MAX_QUIC_IDLE_TIMEOUT_MS = 4_611_686_018_427_387_903L
-        const val MAX_EXTRA_TRAFFIC_HINT_PERCENT = 65_535
+        /** Largest whole second exactly representable below native QUIC's varint-ms ceiling. */
+        const val MAX_QUIC_IDLE_TIMEOUT_S = 4_611_686_018_427_387.0
+        const val MAX_OPTIONAL_REINJECTION_BUDGET_PERCENT = 65_535
     }
 }

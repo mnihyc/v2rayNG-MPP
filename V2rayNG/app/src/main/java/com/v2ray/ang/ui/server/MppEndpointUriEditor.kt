@@ -142,7 +142,11 @@ internal object MppEndpointUriEditor {
             MppPathUnderlay.TCP -> setOf("max-datagram-payload-bytes")
             MppPathUnderlay.QUIC -> setOf("max-tcp-carriers", "allow-datagrams")
         }
-        val options = endpoint.options.filterNot { it.key in incompatibleKeys }
+        val options = endpoint.options.filterNot { option ->
+            option.key in incompatibleKeys ||
+                    (underlay == MppPathUnderlay.TCP &&
+                            option.key == "loss-compensation-percent")
+        }
         return render(endpoint.copy(underlay = underlay, options = options))
     }
 
@@ -209,9 +213,10 @@ internal object MppEndpointUriEditor {
 
     private fun scalarOptionApplies(endpoint: MppEditableEndpoint, key: String): Boolean =
         when (key) {
-            "max-datagram-payload-bytes" -> endpoint.underlay == MppPathUnderlay.QUIC
+            "max-datagram-payload-bytes", "loss-compensation-percent" ->
+                endpoint.underlay == MppPathUnderlay.QUIC
             "max-tcp-carriers" -> endpoint.underlay == MppPathUnderlay.TCP
-            "port-rotation-interval-ms" -> '-' in endpoint.ports
+            "port-rotation-interval-s" -> '-' in endpoint.ports
             else -> true
         }
 
