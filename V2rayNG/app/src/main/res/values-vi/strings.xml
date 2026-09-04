@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">không có thông tin chi tiết</string>
     <string name="value_unknown">không xác định</string>
 
+    <string name="server_mpp_reinjection_budget">Mục tiêu thống kê phục hồi đã chấp nhận (%)</string>
+    <string name="server_mpp_performance_auth_hint">Mục tiêu thống kê phục vụ chẩn đoán cho hoạt động phục hồi MPP đã được chấp nhận (0–65535%); mục tiêu này không bao giờ giới hạn hoạt động phục hồi. Lưu lượng điều khiển, thăm dò đường truyền và truyền lại của lớp vận chuyển không được tính vào mục tiêu này. Độ mới xác thực đặt cửa sổ thời gian được chấp nhận cho dấu thời gian của thông tin xác thực theo số giây nguyên dương.</string>
+
 </resources>

@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">沒有詳細資訊</string>
     <string name="value_unknown">未知</string>
 
+    <string name="server_mpp_reinjection_budget">已接受復原流量統計目標 (%)</string>
+    <string name="server_mpp_performance_auth_hint">用於診斷已接受 MPP 復原流量的統計目標（0–65535%）；它絕不會限制復原。控制流量、路徑探測及底層傳輸重傳不計入該目標。驗證時效以正整數秒設定可接受的認證資訊時間戳記範圍。</string>
+
 </resources>

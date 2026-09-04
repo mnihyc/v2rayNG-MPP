@@ -117,9 +117,9 @@
     <string name="server_mpp_probe_interval">Probe interval (s)</string>
     <string name="server_mpp_probe_timeout">Probe timeout (s)</string>
     <string name="server_mpp_probe_hint">Controls path-health sampling cadence and each probe response deadline.</string>
-    <string name="server_mpp_reinjection_budget">Optional reinjection budget (%)</string>
+    <string name="server_mpp_reinjection_budget">Accepted recovery target (%)</string>
     <string name="server_mpp_auth_freshness">Auth freshness (s)</string>
-    <string name="server_mpp_performance_auth_hint">The optional budget caps extra reliable payload reinjection (0–65535%); control, probes, and native recovery stay outside it. Auth freshness sets the accepted credential timestamp window in positive whole seconds.</string>
+    <string name="server_mpp_performance_auth_hint">Diagnostic accounting target for accepted MPP recovery (0–65535%); it never limits recovery. Control, path probes, and native retransmissions are outside it. Auth freshness sets the accepted credential timestamp window in positive whole seconds.</string>
     <string name="server_mpp_session_retention">Session retention (s)</string>
     <string name="server_mpp_session_retention_hint">Keeps disconnected session state available for resumption.</string>
     <string name="server_mpp_tcp_heartbeat_interval">TCP heartbeat (s)</string>

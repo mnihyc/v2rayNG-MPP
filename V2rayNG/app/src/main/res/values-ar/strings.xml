@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">لا تتوفر تفاصيل</string>
     <string name="value_unknown">غير معروف</string>
 
+    <string name="server_mpp_reinjection_budget">هدف محاسبة الاستعادة المقبولة (%)</string>
+    <string name="server_mpp_performance_auth_hint">هدف تشخيصي لمحاسبة استعادة MPP المقبولة (0–65535%)؛ ولا يحد الاستعادة مطلقًا. لا تُحتسب حركة التحكم وعمليات فحص المسارات وعمليات إعادة الإرسال في طبقة النقل ضمن هذا الهدف. تحدد حداثة المصادقة نافذة الطابع الزمني المقبولة لبيانات الاعتماد بعدد صحيح موجب من الثواني.</string>
+
 </resources>

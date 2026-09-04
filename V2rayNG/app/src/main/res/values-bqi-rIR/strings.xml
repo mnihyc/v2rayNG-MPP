@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">دووسمندی نؽ</string>
     <string name="value_unknown">نا مؽخص</string>
 
+    <string name="server_mpp_reinjection_budget">Accepted recovery target (%)</string>
+    <string name="server_mpp_performance_auth_hint">Diagnostic accounting target for accepted MPP recovery (0–65535%); it never limits recovery. Control traffic, path probes, and native transport retransmissions are outside it. Auth freshness sets the accepted credential timestamp window in positive whole seconds.</string>
+
 </resources>

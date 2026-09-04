@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">جزئیاتی در دسترس نیست</string>
     <string name="value_unknown">ناشناخته</string>
 
+    <string name="server_mpp_reinjection_budget">هدف حسابداری بازیابی پذیرفته‌شده (%)</string>
+    <string name="server_mpp_performance_auth_hint">هدف تشخیصی برای حسابداری بازیابی پذیرفته‌شده MPP (0–65535%) است و هرگز بازیابی را محدود نمی‌کند. ترافیک کنترلی، کاوش‌های مسیر و ارسال‌های مجدد لایه انتقال در این هدف محاسبه نمی‌شوند. تازگی احراز هویت، بازه قابل‌قبول برای برچسب زمانی اعتبارنامه را بر حسب تعداد صحیح و مثبت ثانیه تعیین می‌کند.</string>
+
 </resources>

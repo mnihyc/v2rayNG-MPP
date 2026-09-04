@@ -548,4 +548,7 @@
     <string name="connection_test_empty_message">কোনো বিবরণ পাওয়া যায়নি</string>
     <string name="value_unknown">অজানা</string>
 
+    <string name="server_mpp_reinjection_budget">গৃহীত পুনরুদ্ধার হিসাবের লক্ষ্য (%)</string>
+    <string name="server_mpp_performance_auth_hint">গৃহীত MPP পুনরুদ্ধারের জন্য নির্ণয়মূলক হিসাবের লক্ষ্য (0–65535%); এটি কখনো পুনরুদ্ধার সীমিত করে না। নিয়ন্ত্রণ ট্রাফিক, পাথ প্রোব এবং নেটিভ ট্রান্সপোর্টের পুনঃপ্রেরণ এতে গণনা করা হয় না। প্রমাণীকরণের সতেজতা গৃহীত ক্রেডেনশিয়াল টাইমস্ট্যাম্প উইন্ডোকে ধনাত্মক পূর্ণসংখ্যক সেকেন্ডে নির্ধারণ করে।</string>
+
 </resources>

@@ -25,6 +25,10 @@ This fork adds `EConfigType.MPP` alongside the retained Xray profile types. An
 MPP profile uses the embedded MPTUNNEL `cdylib`; it does not substitute a remote
 helper process for the native engine.
 
+Each release pins its embedded engine in `build-provenance.json`. MPTUNNEL wire
+versions are strict, so upgrade the app and server together; v0.4.7 wire v10 is
+intentionally incompatible with v0.4.5 wire v9.
+
 The MPP editor is intended for users who already understand the protocol. It
 supports:
 
