@@ -24,9 +24,9 @@ class MppAdvancedConfigTest {
         assertFalse(template.contains("[outbounds.performance]"))
         assertTrue(
             template.contains(
-                "# performance = { optional_reinjection_budget_percent = 20, " +
-                        "quic_loss_compensation_percent = 5 } # overrides [flow]; " +
-                        "path URI wins for loss"
+                "# Per-node overrides; path URI still wins for loss.\n" +
+                        "# performance = { optional_reinjection_budget_percent = 20, " +
+                        "quic_loss_compensation_percent = 5 }"
             )
         )
         assertFalse(template.contains("auth_freshness_window_s"))

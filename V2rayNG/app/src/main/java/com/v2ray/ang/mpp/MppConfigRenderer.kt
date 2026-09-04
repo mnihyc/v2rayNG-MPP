@@ -53,11 +53,13 @@ object MppConfigRenderer {
             appendLine()
             appendLine("[flow]")
             appendLine("# TCP streams and UDP associations idle on application payload; 0 disables.")
-            appendLine("idle_timeout_s = 300")
-            appendLine("# Optional reliable MPP reinjection; control/probes/native recovery are excluded.")
-            appendLine("optional_reinjection_budget_percent = 10")
+            appendLine("# idle_timeout_s = 300")
+            appendLine("# Optional startup-rate prior; path URI wins, QUIC qualifies native handoff.")
+            appendLine("# initial_rate_mbps = 100")
+            appendLine("# Directional accepted-recovery accounting target; never gates Product recovery.")
+            appendLine("# optional_reinjection_budget_percent = 10")
             appendLine("# Sender-side QUIC loss correction; a path URI value takes precedence.")
-            appendLine("quic_loss_compensation_percent = 10")
+            appendLine("# quic_loss_compensation_percent = 10")
             appendLine()
             appendLine("[admission]")
             appendLine("max_live_flows = 4096")
@@ -122,10 +124,10 @@ object MppConfigRenderer {
             }
             appendLine("]")
             appendLine()
+            appendLine("# Per-node overrides; path URI still wins for loss.")
             appendLine(
                 "# performance = { optional_reinjection_budget_percent = 20, " +
-                        "quic_loss_compensation_percent = 5 } # overrides [flow]; " +
-                        "path URI wins for loss"
+                        "quic_loss_compensation_percent = 5 }"
             )
             if (advanced != null) {
                 appendLine("[outbounds.performance]")

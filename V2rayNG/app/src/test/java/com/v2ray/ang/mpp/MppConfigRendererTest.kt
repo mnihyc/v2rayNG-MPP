@@ -31,11 +31,19 @@ class MppConfigRendererTest {
             template.contains(
                 "[flow]\n" +
                         "# TCP streams and UDP associations idle on application payload; 0 disables.\n" +
-                        "idle_timeout_s = 300"
+                        "# idle_timeout_s = 300\n" +
+                        "# Optional startup-rate prior; path URI wins, QUIC qualifies native handoff.\n" +
+                        "# initial_rate_mbps = 100\n" +
+                        "# Directional accepted-recovery accounting target; never gates Product recovery.\n" +
+                        "# optional_reinjection_budget_percent = 10\n" +
+                        "# Sender-side QUIC loss correction; a path URI value takes precedence.\n" +
+                        "# quic_loss_compensation_percent = 10"
             )
         )
-        assertTrue(template.contains("optional_reinjection_budget_percent = 10"))
-        assertTrue(template.contains("quic_loss_compensation_percent = 10"))
+        assertFalse(Regex("(?m)^idle_timeout_s\\s*=").containsMatchIn(template))
+        assertFalse(Regex("(?m)^initial_rate_mbps\\s*=").containsMatchIn(template))
+        assertFalse(Regex("(?m)^optional_reinjection_budget_percent\\s*=").containsMatchIn(template))
+        assertFalse(Regex("(?m)^quic_loss_compensation_percent\\s*=").containsMatchIn(template))
         assertTrue(template.contains("[admission]\nmax_live_flows = 4096"))
         assertTrue(template.contains("[inbounds.admission]\nmax_connections = 4096"))
         assertTrue(template.contains("protocol = \"mixed\""))
