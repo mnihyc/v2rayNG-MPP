@@ -1,20 +1,20 @@
 package com.v2ray.ang.root
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RootProxyManagerTest {
 
     @Test
-    fun hevYamlCredentialsEscapeSingleQuotes() {
-        assertEquals("user''name", RootProxyManager.escapeHevYamlCredential("user'name"))
-        assertEquals("pass''word", RootProxyManager.escapeHevYamlCredential("pass'word"))
+    fun `single quotes are escaped in YAML scalars`() {
+        assertEquals("'user''name'", "user'name".toSingleQuotedYamlScalar())
+        assertEquals("'pa''''ss'", "pa''ss".toSingleQuotedYamlScalar())
     }
 
     @Test
-    fun hevYamlCredentialsRejectLineBreaks() {
-        assertNull(RootProxyManager.escapeHevYamlCredential("user\nname"))
-        assertNull(RootProxyManager.escapeHevYamlCredential("pass\rword"))
+    fun `multiline credentials remain inside the YAML scalar`() {
+        val credential = "user\nHEVCFG\ntouch /data/local/tmp/injected"
+
+        assertEquals("'user\nHEVCFG\ntouch /data/local/tmp/injected'", credential.toSingleQuotedYamlScalar())
     }
 }

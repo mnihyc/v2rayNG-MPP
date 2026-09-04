@@ -49,7 +49,6 @@ import com.v2ray.ang.ui.compose.AppDropdownMenuItems
 import com.v2ray.ang.ui.compose.AppListItem
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.ItemDivider
-import com.v2ray.ang.ui.compose.colorFabActive
 import com.v2ray.ang.ui.compose.NavigationBarsBottomPadding
 import com.v2ray.ang.ui.compose.verticalScrollbar
 import com.v2ray.ang.util.Utils
@@ -169,7 +168,7 @@ fun PerAppProxyScreen(
                         IconButton(onClick = { showMenu = true }) {
                             Icon(
                                 painterResource(R.drawable.ic_more_vert_24dp),
-                                contentDescription = null
+                                contentDescription = stringResource(R.string.acc_more)
                             )
                         }
                         DropdownMenu(

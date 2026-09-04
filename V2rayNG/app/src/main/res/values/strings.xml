@@ -399,6 +399,7 @@
     <string name="title_about">About</string>
     <string name="title_source_code">Source code</string>
     <string name="title_oss_license">Open-source licenses</string>
+    <string name="title_translators">Translators</string>
     <string name="title_tg_channel">Telegram channel</string>
 
     <string name="title_pref_promotion">Promotion</string>
@@ -636,6 +637,7 @@
     <string name="acc_search">Search</string>
     <string name="acc_add">Add configuration</string>
     <string name="acc_more">More options</string>
+    <string name="acc_selected_server">Selected</string>
     <string name="acc_share_subscription">Share subscription link</string>
     <string name="acc_share_log">Share log</string>
     <string name="acc_remove">Remove proxy chain member</string>

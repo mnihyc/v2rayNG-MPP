@@ -283,6 +283,7 @@
     <string name="title_about">关于</string>
     <string name="title_source_code">源代码</string>
     <string name="title_oss_license">开源许可证</string>
+    <string name="title_translators">翻译贡献者</string>
     <string name="title_tg_channel">Telegram 频道</string>
 
     <string name="title_pref_promotion">推广</string>
@@ -520,6 +521,7 @@
     <string name="acc_search">搜索</string>
     <string name="acc_add">添加配置</string>
     <string name="acc_more">更多选项</string>
+    <string name="acc_selected_server">Selected</string>
     <string name="acc_share_subscription">分享订阅链接</string>
     <string name="acc_share_log">分享日志</string>
     <string name="acc_remove">移除代理链成员</string>

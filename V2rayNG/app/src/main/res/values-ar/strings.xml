@@ -283,6 +283,7 @@
     <string name="title_about">حول التطبيق</string>
     <string name="title_source_code">الكود المصدري</string>
     <string name="title_oss_license">تراخيص المصادر المفتوحة</string>
+    <string name="title_translators">المترجمون</string>
     <string name="title_tg_channel">قناة Telegram</string>
 
     <string name="title_pref_promotion">ترويج</string>
@@ -520,6 +521,7 @@
     <string name="acc_search">بحث</string>
     <string name="acc_add">إضافة تكوين</string>
     <string name="acc_more">المزيد من الخيارات</string>
+    <string name="acc_selected_server">Selected</string>
     <string name="acc_share_subscription">مشاركة رابط الاشتراك</string>
     <string name="acc_share_log">مشاركة السجل</string>
     <string name="acc_remove">إزالة عضو من سلسلة الوكلاء</string>

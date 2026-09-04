@@ -283,6 +283,7 @@
     <string name="title_about">সম্পর্কিত</string>
     <string name="title_source_code">সোর্স কোড</string>
     <string name="title_oss_license">ওপেন সোর্স লাইসেন্স</string>
+    <string name="title_translators">অনুবাদকগণ</string>
     <string name="title_tg_channel">টেলিগ্রাম চ্যানেল</string>
 
     <string name="title_pref_promotion">প্রচার</string>
@@ -520,6 +521,7 @@
     <string name="acc_search">অনুসন্ধান করুন</string>
     <string name="acc_add">কনফিগারেশন যোগ করুন</string>
     <string name="acc_more">আরও বিকল্প</string>
+    <string name="acc_selected_server">Selected</string>
     <string name="acc_share_subscription">সাবস্ক্রিপশন লিংক শেয়ার করুন</string>
     <string name="acc_share_log">লগ শেয়ার করুন</string>
     <string name="acc_remove">প্রক্সি চেইনের সদস্য সরান</string>
