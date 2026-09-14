@@ -35,9 +35,9 @@ class MppConfigRendererTest {
                         "# Optional startup-rate prior; path URI wins, QUIC qualifies native handoff.\n" +
                         "# initial_rate_mbps = 100\n" +
                         "# Directional accepted-recovery accounting target; never gates Product recovery.\n" +
-                        "# optional_reinjection_budget_percent = 10\n" +
+                        "# optional_reinjection_budget_percent = 20\n" +
                         "# Sender-side QUIC loss correction; a path URI value takes precedence.\n" +
-                        "# quic_loss_compensation_percent = 10"
+                        "# quic_loss_compensation_percent = 20"
             )
         )
         assertFalse(Regex("(?m)^idle_timeout_s\\s*=").containsMatchIn(template))

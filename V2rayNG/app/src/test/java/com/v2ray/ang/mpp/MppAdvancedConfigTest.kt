@@ -1,6 +1,7 @@
 package com.v2ray.ang.mpp
 
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.v2ray.ang.dto.entities.MppAdvancedConfig
 import com.v2ray.ang.dto.entities.MppProfileConfig
 import org.junit.Assert.assertEquals
@@ -58,7 +59,7 @@ class MppAdvancedConfigTest {
         assertTrue(template.contains("path_probe_timeout_s = 2"))
         assertTrue(
             template.contains(
-                "[outbounds.performance]\noptional_reinjection_budget_percent = 10"
+                "[outbounds.performance]\noptional_reinjection_budget_percent = 20"
             )
         )
         assertTrue(template.contains("auth_freshness_window_s = 300"))
@@ -199,6 +200,50 @@ class MppAdvancedConfigTest {
     }
 
     @Test
+    fun unrelatedAdvancedEditUsesCurrentDefaultAndPreservesStoredBudget() {
+        val gson = Gson()
+        val cases = listOf(
+            null to 20,
+            """{"pathProbeTimeoutS":2.0}""" to 20,
+            """{"pathProbeTimeoutS":2.0,"optionalReinjectionBudgetPercent":10}""" to 10,
+        )
+
+        cases.forEach { (storedAdvanced, expectedBudget) ->
+            val savedProfile = gson.toJsonTree(validConfig()).asJsonObject
+            if (storedAdvanced != null) {
+                savedProfile.add("advanced", gson.fromJson(storedAdvanced, JsonObject::class.java))
+            }
+            val restored = gson.fromJson(savedProfile, MppProfileConfig::class.java)
+            // The guided editor fills absent advanced settings before applying
+            // this unrelated edit. A stored explicit 10 remains user intent.
+            val edited = restored.copy(
+                advanced = (restored.advanced ?: MppAdvancedConfig()).copy(pathProbeTimeoutS = 2.125),
+            )
+            val reopened = gson.fromJson(gson.toJson(edited), MppProfileConfig::class.java)
+
+            val projection = MppEditorProjection.from(reopened, "edge.example")
+            val nativePatch = gson.fromJson(MppEditorJson.encode(projection), JsonObject::class.java)
+            assertEquals(
+                expectedBudget,
+                nativePatch.getAsJsonObject("advanced")
+                    .get("optional_reinjection_budget_percent").asInt,
+            )
+            assertEquals(
+                2.125,
+                nativePatch.getAsJsonObject("advanced").get("path_probe_timeout_s").asDouble,
+                0.0,
+            )
+            val template = MppConfigRenderer.renderEditableTemplate("edge.example", reopened)
+            assertTrue(template.contains("path_probe_timeout_s = 2.125"))
+            assertTrue(
+                template.contains(
+                    "[outbounds.performance]\noptional_reinjection_budget_percent = $expectedBudget"
+                )
+            )
+        }
+    }
+
+    @Test
     fun schemaTwoProjectionUsesOnlySecondsAndTheRenamedBudget() {
         val projection = MppEditorProjection.from(
             validConfig().copy(advanced = MppAdvancedConfig(pathProbeTimeoutS = 2.125)),
@@ -209,7 +254,7 @@ class MppAdvancedConfigTest {
 
         assertTrue(json.contains("\"schema_version\":2"))
         assertTrue(json.contains("\"path_probe_timeout_s\":2.125"))
-        assertTrue(json.contains("\"optional_reinjection_budget_percent\":10"))
+        assertTrue(json.contains("\"optional_reinjection_budget_percent\":20"))
         assertTrue(json.contains("\"auth_freshness_window_s\":300.0"))
         assertFalse(json.contains("_ms\""))
         assertFalse(json.contains("_seconds\""))

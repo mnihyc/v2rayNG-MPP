@@ -21,7 +21,7 @@ data class MppAdvancedConfig(
     companion object {
         const val DEFAULT_PATH_PROBE_INTERVAL_S = 10.0
         const val DEFAULT_PATH_PROBE_TIMEOUT_S = 2.0
-        const val DEFAULT_OPTIONAL_REINJECTION_BUDGET_PERCENT = 10
+        const val DEFAULT_OPTIONAL_REINJECTION_BUDGET_PERCENT = 20
         const val DEFAULT_AUTH_FRESHNESS_WINDOW_S = 300.0
         const val DEFAULT_SESSION_RETENTION_TIMEOUT_S = 300.0
         const val DEFAULT_TCP_HEARTBEAT_INTERVAL_S = 10.0

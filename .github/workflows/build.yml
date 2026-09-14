@@ -123,6 +123,13 @@ jobs:
             -PABI_FILTERS=x86_64 \
             -PUNIVERSAL_APK=false
 
+      - name: Run full F-Droid unit tests and compile
+        working-directory: V2rayNG
+        run: |
+          ./gradlew testFdroidDebugUnitTest :app:compileFdroidDebugKotlin \
+            -PABI_FILTERS=x86_64 \
+            -PUNIVERSAL_APK=false
+
       - name: Test emulator health gate
         run: .github/scripts/run-mptunnel-instrumentation.sh --self-test
 
