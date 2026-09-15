@@ -40,7 +40,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.ProcessFinder
@@ -58,6 +62,7 @@ object CoreServiceManager {
     private var processFinder: XrayProcessFinder? = null
     private var browserDialer: IDialerService? = null
     private var networkMonitor: NetworkMonitor? = null
+    private val connectionTestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeEngine = ActiveEngine.NONE
     private var mptunnelWatchdogJob: Job? = null
     private var mptunnelWatchdogGeneration = 0L
@@ -251,6 +256,7 @@ object CoreServiceManager {
      */
     @Synchronized
     fun stopCoreLoop(): Boolean {
+        connectionTestScope.coroutineContext.cancelChildren()
         val service = getService() ?: return false
 
         val stoppedEngine = activeEngine
@@ -455,6 +461,7 @@ object CoreServiceManager {
             val tunFd = currentVpnInterface
 
             isReloading = true
+            connectionTestScope.coroutineContext.cancelChildren()
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload start...")
 
             when (activeEngine) {
@@ -527,13 +534,15 @@ object CoreServiceManager {
      * Tests with primary URL first, then falls back to alternative URL if needed.
      * Also fetches remote IP information if the delay test was successful.
      */
-    private fun measureCoreDelay() {
-        if (!isRunning()) {
+    private fun measureCoreDelay(requestId: String) {
+        val service = getService() ?: return
+        if (!isRunning() || isReloading) {
+            MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_CANCEL, "", requestId)
             return
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            val service = getService() ?: return@launch
+        connectionTestScope.coroutineContext.cancelChildren()
+        connectionTestScope.launch {
             var time = -1L
             var errorStr = ""
 
@@ -544,6 +553,7 @@ object CoreServiceManager {
                 errorStr = e.message?.substringAfter("\":").orEmpty()
             }
             if (time == -1L) {
+                ensureActive()
                 try {
                     time = measureDelay(SettingsManager.getDelayTestUrl(true))
                 } catch (e: Exception) {
@@ -552,6 +562,7 @@ object CoreServiceManager {
                 }
             }
 
+            ensureActive()
             val endpoint = if (time >= 0) SpeedtestManager.getRemoteIPInfo() else null
             val result = ConnectionTestResult(
                 delayMillis = time,
@@ -559,7 +570,17 @@ object CoreServiceManager {
                 country = endpoint?.country,
                 ipAddress = endpoint?.ipAddress,
             )
-            MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_RESULT, result)
+            withContext(Dispatchers.Main.immediate) {
+                if (isRunning()) {
+                    MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_RESULT, result, requestId)
+                } else {
+                    MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_CANCEL, "", requestId)
+                }
+            }
+        }.invokeOnCompletion { cause ->
+            if (cause is CancellationException) {
+                MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_CANCEL, "", requestId)
+            }
         }
     }
 
@@ -716,7 +737,8 @@ object CoreServiceManager {
                 }
 
                 AppConfig.MSG_MEASURE_DELAY -> {
-                    measureCoreDelay()
+                    if (isOrderedBroadcast) resultCode = Activity.RESULT_OK
+                    measureCoreDelay(intent.getStringExtra("content").orEmpty())
                 }
             }
 
