@@ -117,6 +117,7 @@ class ServerMppActivity : BaseServerActivity() {
                 label = stringResource(R.string.server_lab_remarks),
                 value = uiState.remarks,
                 onValueChange = { uiState.remarks = it },
+                isError = uiState.isRemarksError,
             )
             MppProtocolFields(uiState)
         }

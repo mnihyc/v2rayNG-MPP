@@ -44,6 +44,8 @@ fun FormTextField(
     textStyle: TextStyle = TextStyle.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingIcon: (@Composable () -> Unit)? = null,
+    isError: Boolean = false,
+    supportingText: String? = null,
 ) {
     Box(
         modifier = modifier
@@ -55,6 +57,8 @@ fun FormTextField(
             onValueChange = onValueChange,
             label = { Text(label) },
             placeholder = placeholder?.let { { Text(it) } },
+            isError = isError,
+            supportingText = supportingText?.let { { Text(it) } },
             singleLine = false,
             minLines = minLines,
             maxLines = maxLines,

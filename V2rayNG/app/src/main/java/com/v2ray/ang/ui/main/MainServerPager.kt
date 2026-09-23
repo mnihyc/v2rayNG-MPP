@@ -76,7 +76,7 @@ fun GroupPagerPage(
     onEditServer: (String, ProfileItem) -> Unit,
     onShareServer: (String, ProfileItem) -> Unit,
     onMoreServer: (String, ProfileItem) -> Unit,
-    onRemoveServer: (String) -> Unit,
+    onRemoveServer: (String, String) -> Unit,
     contentPadding: PaddingValues
 ) {
     val groupStateFlow = remember(groupId) {
@@ -122,7 +122,7 @@ private class ServerRowActions(
     val edit: (String, ProfileItem) -> Unit,
     val share: (String, ProfileItem) -> Unit,
     val more: (String, ProfileItem) -> Unit,
-    val remove: (String) -> Unit,
+    val remove: (String, String) -> Unit,
 )
 
 @Composable
@@ -380,7 +380,7 @@ private fun ServerListItem(
                             Modifier.size(24.dp)
                         )
                     }
-                    IconButton(onClick = { actions.remove(row.guid) }, Modifier.size(36.dp)) {
+                    IconButton(onClick = { actions.remove(row.guid, row.remarks) }, Modifier.size(36.dp)) {
                         Icon(
                             painterResource(R.drawable.ic_delete_24dp),
                             stringResource(R.string.acc_delete),
