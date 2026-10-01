@@ -13,8 +13,8 @@ android {
         applicationId = "com.v2ray.ang.mpp"
         minSdk = 24
         targetSdk = 37
-        versionCode = 756
-        versionName = "2.3.9-mpp.2"
+        versionCode = 757
+        versionName = "2.3.9-mpp.3"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         val packagedAbis = abiFilterList?.takeIf { it.isNotEmpty() }
