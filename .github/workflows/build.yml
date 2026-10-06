@@ -343,10 +343,15 @@ jobs:
             exit 1
           fi
           version="${RELEASE_TAG#v}"
+          notes_file=".github/release-notes/${RELEASE_TAG}.md"
+          notes_args=(--generate-notes)
+          if [[ -f "$notes_file" ]]; then
+            notes_args=(--notes-file "$notes_file")
+          fi
           gh release create "$RELEASE_TAG" \
             --draft \
             --verify-tag \
-            --generate-notes \
+            "${notes_args[@]}" \
             --title "v2rayNG-MPP ${version}"
           gh release view "$RELEASE_TAG" --json databaseId,isDraft,tagName \
             > .release-created.json
