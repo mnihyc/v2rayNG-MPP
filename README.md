@@ -26,8 +26,8 @@ MPP profile uses the embedded MPTUNNEL `cdylib`; it does not substitute a remote
 helper process for the native engine.
 
 Each release pins its embedded engine in `build-provenance.json`. The
-2.3.9-mpp.4 release bundles MPTUNNEL 0.6.6 (wire v16). Use a matching 0.6.6
-server to receive all fixes; wire v16 remains compatible with 0.6.0–0.6.5
+2.3.9-mpp.5 release bundles MPTUNNEL 0.6.7 (wire v16). Use a matching 0.6.7
+server to receive all fixes; wire v16 remains compatible with 0.6.0–0.6.6
 servers. Earlier 0.5.x servers use a different wire version and require a
 coordinated app/server upgrade.
 
